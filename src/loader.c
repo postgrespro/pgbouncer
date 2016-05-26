@@ -187,6 +187,11 @@ bool parse_database(void *base, const char *name, const char *connstr)
 	int dbname_ofs;
 	int pool_mode = POOL_INHERIT;
 
+	int bcc_count = 0;
+	int bcc_idx = 0;
+	const char **bcc_hosts = NULL;
+	const char **bcc_ports = NULL;
+
 	char *tmp_connstr;
 	const char *dbname = name;
 	char *host = NULL;
@@ -223,6 +228,32 @@ bool parse_database(void *base, const char *name, const char *connstr)
 		} else if (!key[0]) {
 			break;
 		}
+		if (strcmp("bcc_host", key) == 0) {
+			bcc_count++;
+		}
+	}
+
+	bcc_hosts = malloc(sizeof(char*) * bcc_count);
+	bcc_ports = malloc(sizeof(char*) * bcc_count);
+	for (bcc_idx = 0; bcc_idx < bcc_count; bcc_idx++) {
+		bcc_hosts[bcc_idx] = NULL;
+		bcc_ports[bcc_idx] = NULL;
+	}
+	bcc_idx = 0;
+
+	free(tmp_connstr);
+	tmp_connstr = strdup(connstr);
+	if (!tmp_connstr)
+		return false;
+	p = tmp_connstr;
+	while (*p) {
+		p = cstr_get_pair(p, &key, &val);
+		if (p == NULL) {
+			log_error("%s: syntax error in connstring", name);
+			goto fail;
+		} else if (!key[0]) {
+			break;
+		}
 
 		if (strcmp("dbname", key) == 0) {
 			dbname = val;
@@ -230,6 +261,17 @@ bool parse_database(void *base, const char *name, const char *connstr)
 			host = val;
 		} else if (strcmp("port", key) == 0) {
 			port = val;
+		} else if (strcmp("bcc_host", key) == 0) {
+			if (bcc_hosts[bcc_idx] != NULL) {
+				bcc_idx++;
+			}
+			bcc_hosts[bcc_idx] = val;
+		} else if (strcmp("bcc_port", key) == 0) {
+			if (bcc_idx >= bcc_count) {
+				log_error("%s: syntax error in connstring: too many 'bcc_port' elements", name);
+				goto fail;
+			}
+			bcc_ports[bcc_idx] = val;
 		} else if (strcmp("user", key) == 0) {
 			username = val;
 		} else if (strcmp("password", key) == 0) {
@@ -278,6 +320,23 @@ bool parse_database(void *base, const char *name, const char *connstr)
 		log_error("cannot create database, no memory?");
 		goto fail;
 	}
+
+	db->bcc_count = bcc_count;
+	db->bcc = malloc(sizeof(struct PgBcc) * bcc_count);
+	for (bcc_idx = 0; bcc_idx < bcc_count; bcc_idx++) {
+		int p;
+		db->bcc[bcc_idx].host = strdup(bcc_hosts[bcc_idx]);
+		p = atoi(bcc_ports[bcc_idx]);
+		if (p == 0) {
+			log_error("skipping database %s because"
+				  " of bad bcc[%d] port: %s",
+				  name, bcc_idx, bcc_ports[bcc_idx]);
+			goto fail;
+		}
+		db->bcc[bcc_idx].port = p;
+	}
+	free(bcc_hosts);
+	free(bcc_ports);
 
 	/* host= */
 	if (host) {
