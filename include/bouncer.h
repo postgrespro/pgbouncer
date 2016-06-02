@@ -78,6 +78,7 @@ enum SSLMode {
 
 typedef struct PgSocket PgSocket;
 typedef struct PgUser PgUser;
+typedef struct PgBcc PgBcc;
 typedef struct PgDatabase PgDatabase;
 typedef struct PgPool PgPool;
 typedef struct PgStats PgStats;
@@ -328,6 +329,9 @@ struct PgDatabase {
 struct PgSocket {
 	struct List head;		/* list header */
 	PgSocket *link;		/* the dest of packets */
+
+	int connections;	/* the number of addresses to resolve (BCCs + main) */
+
 	PgPool *pool;		/* parent pool, if NULL not yet assigned */
 
 	PgUser *auth_user;	/* presented login, for client it may differ from pool->user */

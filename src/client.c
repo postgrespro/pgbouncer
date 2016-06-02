@@ -678,6 +678,7 @@ bool client_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_FAILED:
 		/* ^ those should not happen */
 	case SBUF_EV_RECV_FAILED:
+		//Assert(false);
 		disconnect_client(client, false, "client unexpected eof");
 		break;
 	case SBUF_EV_SEND_FAILED:

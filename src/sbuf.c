@@ -109,6 +109,7 @@ static void sbuf_tls_handshake_cb(int fd, short flags, void *_sbuf);
 void sbuf_init(SBuf *sbuf, sbuf_cb_t proto_fn)
 {
 	memset(sbuf, 0, sizeof(SBuf));
+	sbuf->bcc_index = -1;
 	sbuf->proto_cb = proto_fn;
 	sbuf->ops = &raw_sbufio_ops;
 }
@@ -289,6 +290,19 @@ bool sbuf_use_callback_once(SBuf *sbuf, short ev, sbuf_libevent_cb user_cb)
 /* socket cleanup & close: keeps .handler and .arg values */
 bool sbuf_close(SBuf *sbuf)
 {
+	int i;
+	for (i = 0; i < sbuf->bcc_count; i++) {
+		bool bccres = sbuf_close(sbuf->bcc + i);
+		if (!bccres) {
+			log_warning("failed to close bcc sbuf");
+		}
+	}
+
+	if (sbuf->bcc) {
+		free(sbuf->bcc);
+		sbuf->bcc = NULL;
+	}
+
 	if (sbuf->wait_type) {
 		Assert(sbuf->sock);
 		/* event_del() acts funny occasionally, debug it */

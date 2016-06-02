@@ -442,13 +442,19 @@ static bool handle_sslchar(PgSocket *server, struct MBuf *data)
 bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 {
 	bool res = false;
-	PgSocket *server = container_of(sbuf, PgSocket, sbuf);
-	PgPool *pool = server->pool;
+	PgSocket *server;
+	PgPool *pool;
 	PktHdr pkt;
 	char infobuf[96];
 
+	Assert(sbuf->bcc_index < 0);
+	server = container_of(sbuf, PgSocket, sbuf);
+	pool = server->pool;
+
 	Assert(is_server_socket(server));
 	Assert(server->state != SV_FREE);
+
+	slog_info(server, "server_proto for sbuf %p", sbuf);
 
 	/* may happen if close failed */
 	if (server->state == SV_JUSTFREE)
@@ -462,6 +468,11 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		disconnect_client(server->link, false, "unexpected eof");
 		break;
 	case SBUF_EV_READ:
+		{
+			unsigned avail = mbuf_avail_for_read(data);
+			slog_info(server, "%u bytes available from a server", avail);
+		}
+
 		if (server->wait_sslchar) {
 			res = handle_sslchar(server, data);
 			break;
@@ -500,8 +511,14 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_OK:
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
-		server->request_time = get_cached_time();
-		res = handle_connect(server);
+		server->connections--;
+		slog_info(server, "%d connections to make", server->connections);
+		if (server->connections <= 0) {
+			server->request_time = get_cached_time();
+			res = handle_connect(server);
+		} else {
+			dns_connect(server);
+		}
 		break;
 	case SBUF_EV_FLUSH:
 		res = true;
@@ -564,3 +581,50 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	return res;
 }
 
+/* callback from SBuf */
+bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
+{
+	bool res = false;
+	PgSocket *server;
+
+	Assert(sbuf->bcc_index >= 0);
+	Assert(sbuf->orig != NULL);
+	server = container_of(sbuf->orig, PgSocket, sbuf);
+
+	Assert(is_server_socket(server));
+	Assert(server->state != SV_FREE);
+
+	slog_info(server, "bcc_proto for sbuf %p", sbuf);
+
+	/* may happen if close failed */
+	if (server->state == SV_JUSTFREE)
+		return false;
+
+	switch (evtype) {
+	case SBUF_EV_RECV_FAILED:
+		slog_noise(server, "bcc recv failed");
+		break;
+	case SBUF_EV_SEND_FAILED:
+		slog_noise(server, "bcc send failed");
+		break;
+	case SBUF_EV_READ:
+		{
+			unsigned avail = mbuf_avail_for_read(data);
+			slog_info(server, "skipping %u bytes from a bcc", avail);
+			sbuf_prepare_skip(sbuf, avail);
+			res = true;
+			break;
+		}
+	case SBUF_EV_CONNECT_FAILED:
+	case SBUF_EV_CONNECT_OK:
+		Assert(server->state == SV_LOGIN);
+		server->connections--;
+		slog_info(server, "%d connections to make", server->connections);
+		Assert(server->connections > 0);
+		dns_connect(server);
+		break;
+	default:
+		break;
+	}
+	return res;
+}

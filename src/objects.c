@@ -610,6 +610,7 @@ bool find_server(PgSocket *client)
 
 	/* link or send to waiters list */
 	if (server) {
+		log_warning("linking client %p with server %p", client, server);
 		client->link = server;
 		server->link = client;
 		change_server_state(server, SV_ACTIVE);
@@ -623,6 +624,7 @@ bool find_server(PgSocket *client)
 			res = true;
 		}
 	} else {
+		log_warning("sending client to pause list");
 		pause_client(client);
 		res = false;
 	}
@@ -747,21 +749,13 @@ bool release_server(PgSocket *server)
 	return true;
 }
 
-/* drop server connection */
-void disconnect_server(PgSocket *server, bool notify, const char *reason, ...)
+static void disconnect_server_preformatted(PgSocket *server, bool notify, const char *reason)
 {
 	PgPool *pool = server->pool;
 	PgSocket *client;
 	static const uint8_t pkt_term[] = {'X', 0,0,0,4};
 	int send_term = 1;
 	usec_t now = get_cached_time();
-	char buf[128];
-	va_list ap;
-
-	va_start(ap, reason);
-	vsnprintf(buf, sizeof(buf), reason, ap);
-	va_end(ap);
-	reason = buf;
 
 	if (cf_log_disconnections)
 		slog_info(server, "closing because: %s (age=%" PRIu64 ")", reason,
@@ -814,6 +808,17 @@ void disconnect_server(PgSocket *server, bool notify, const char *reason, ...)
 	change_server_state(server, SV_JUSTFREE);
 	if (!sbuf_close(&server->sbuf))
 		log_noise("sbuf_close failed, retry later");
+}
+
+/* drop server connection */
+void disconnect_server(PgSocket *server, bool notify, const char *reason, ...)
+{
+	char buf[128];
+	va_list ap;
+	va_start(ap, reason);
+	vsnprintf(buf, sizeof(buf), reason, ap);
+	va_end(ap);
+	disconnect_server_preformatted(server, notify, buf);
 }
 
 /* drop client connection */
@@ -876,11 +881,20 @@ void disconnect_client(PgSocket *client, bool notify, const char *reason, ...)
 static void connect_server(struct PgSocket *server, const struct sockaddr *sa, int salen)
 {
 	bool res;
+	int port;
+	SBuf *sbuf = &server->sbuf;
+
+	if (server->connections > 1) {
+		port = server->pool->db->bcc[server->connections - 2].port;
+		sbuf = sbuf->bcc + server->connections - 2;
+	} else {
+		port = server->pool->db->port;
+	}
 
 	/* fill remote_addr */
 	memset(&server->remote_addr, 0, sizeof(server->remote_addr));
 	if (sa->sa_family == AF_UNIX) {
-		pga_set(&server->remote_addr, AF_UNIX, server->pool->db->port);
+		pga_set(&server->remote_addr, AF_UNIX, port);
 	} else {
 		pga_copy(&server->remote_addr, sa);
 	}
@@ -888,10 +902,11 @@ static void connect_server(struct PgSocket *server, const struct sockaddr *sa, i
 	slog_debug(server, "launching new connection to server");
 
 	/* start connecting */
-	res = sbuf_connect(&server->sbuf, sa, salen,
+	res = sbuf_connect(sbuf, sa, salen,
 			   cf_server_connect_timeout / USEC);
-	if (!res)
-		log_noise("failed to launch new connection");
+	if (!res) {
+		log_warning("failed to launch new connection");
+	}
 }
 
 static void dns_callback(void *arg, const struct sockaddr *sa, int salen)
@@ -904,7 +919,11 @@ static void dns_callback(void *arg, const struct sockaddr *sa, int salen)
 	server->dns_token = NULL;
 
 	if (!sa) {
-		disconnect_server(server, true, "server dns lookup failed");
+		if (server->connections > 1) {
+			log_noise("failed to resolve a bcc address");
+		} else {
+			disconnect_server(server, true, "server dns lookup failed");
+		}
 		return;
 	} else if (sa->sa_family == AF_INET) {
 		char buf[64];
@@ -923,24 +942,40 @@ static void dns_callback(void *arg, const struct sockaddr *sa, int salen)
 		slog_debug(server, "dns_callback: inet6: %s",
 			   sa2str(sa, buf, sizeof(buf)));
 	} else {
-		disconnect_server(server, true, "unknown address family: %d", sa->sa_family);
+		if (server->connections > 1) {
+			log_noise("unknown bcc address family: %d", sa->sa_family);
+		} else {
+			disconnect_server(server, true, "unknown address family: %d", sa->sa_family);
+		}
 		return;
 	}
 
 	connect_server(server, sa, salen);
 }
 
-static void dns_connect(struct PgSocket *server)
+void dns_connect(struct PgSocket *server)
 {
 	struct sockaddr_un sa_un;
 	struct sockaddr_in sa_in;
 	struct sockaddr_in6 sa_in6;
 	struct sockaddr *sa;
 	struct PgDatabase *db = server->pool->db;
-	const char *host = db->host;
+	const char *host;
+	int port;
 	const char *unix_dir;
 	int sa_len;
 	int res;
+
+	if (server->connections > 1) {
+		PgBcc *bcc = db->bcc + server->connections - 2;
+		host = bcc->host;
+		port = bcc->port;
+		slog_info(server, "connecting to bcc #%d %s:%d", server->connections - 2, host, port);
+	} else {
+		host = db->host;
+		port = db->port;
+		slog_info(server, "connecting to server %s:%d", host, port);
+	}
 
 	if (!host || host[0] == '/') {
 		slog_noise(server, "unix socket: %s", sa_un.sun_path);
@@ -949,28 +984,32 @@ static void dns_connect(struct PgSocket *server)
 		unix_dir = host ? host : cf_unix_socket_dir;
 		if (!unix_dir || !*unix_dir) {
 			log_error("Unix socket dir not configured: %s", db->name);
-			disconnect_server(server, false, "cannot connect");
+			if (server->connections > 1) {
+				slog_info(server, "cannot connect to bcc #%d %s:%d", server->connections - 2, host, port);
+			} else {
+				disconnect_server(server, false, "cannot connect");
+			}
 			return;
 		}
 		snprintf(sa_un.sun_path, sizeof(sa_un.sun_path),
-			 "%s/.s.PGSQL.%d", unix_dir, db->port);
+			 "%s/.s.PGSQL.%d", unix_dir, port);
 		sa = (struct sockaddr *)&sa_un;
 		sa_len = sizeof(sa_un);
 		res = 1;
 	} else if (strchr(host, ':')) {  /* assume IPv6 address on any : in addr */
-		slog_noise(server, "inet6 socket: %s", db->host);
+		slog_noise(server, "inet6 socket: %s", host);
 		memset(&sa_in6, 0, sizeof(sa_in6));
 		sa_in6.sin6_family = AF_INET6;
-		res = inet_pton(AF_INET6, db->host, &sa_in6.sin6_addr);
-		sa_in6.sin6_port = htons(db->port);
+		res = inet_pton(AF_INET6, host, &sa_in6.sin6_addr);
+		sa_in6.sin6_port = htons(port);
 		sa = (struct sockaddr *)&sa_in6;
 		sa_len = sizeof(sa_in6);
 	} else { /* else try IPv4 */
-		slog_noise(server, "inet socket: %s", db->host);
+		slog_noise(server, "inet socket: %s", host);
 		memset(&sa_in, 0, sizeof(sa_in));
 		sa_in.sin_family = AF_INET;
-		res = inet_pton(AF_INET, db->host, &sa_in.sin_addr);
-		sa_in.sin_port = htons(db->port);
+		res = inet_pton(AF_INET, host, &sa_in.sin_addr);
+		sa_in.sin_port = htons(port);
 		sa = (struct sockaddr *)&sa_in;
 		sa_len = sizeof(sa_in);
 	}
@@ -978,9 +1017,9 @@ static void dns_connect(struct PgSocket *server)
 	/* if simple parse failed, use DNS */
 	if (res != 1) {
 		struct DNSToken *tk;
-		slog_noise(server, "dns socket: %s", db->host);
+		slog_noise(server, "dns socket: %s", host);
 		/* launch dns lookup */
-		tk = adns_resolve(adns, db->host, dns_callback, server);
+		tk = adns_resolve(adns, host, dns_callback, server);
 		if (tk)
 			server->dns_token = tk;
 		return;
@@ -1054,6 +1093,7 @@ bool evict_user_connection(PgUser *user)
 void launch_new_connection(PgPool *pool)
 {
 	PgSocket *server;
+	int i;
 	int total;
 
 	/* allow only small number of connection attempts at a time */
@@ -1129,13 +1169,32 @@ allow_new:
 	}
 
 	/* initialize it */
+	server->connections = pool->db->bcc_count + 1;
 	server->pool = pool;
+	log_info("setting A auth_user = %p (was %p)", server->pool->user, server->auth_user);
 	server->auth_user = server->pool->user;
 	server->connect_time = get_cached_time();
 	pool->last_connect_time = get_cached_time();
 	change_server_state(server, SV_LOGIN);
 	pool->db->connection_count++;
 	pool->user->connection_count++;
+
+	{
+		/*
+		 * [SBuf orig] <---1-to-N---> [SBuf bcc]
+		 */
+		SBuf *orig = &server->sbuf;
+		orig->bcc_count = pool->db->bcc_count;
+		if (orig->bcc_count > 0) {
+			orig->bcc = malloc(sizeof(SBuf) * orig->bcc_count);
+		}
+		for (i = 0; i < orig->bcc_count; i++) {
+			SBuf *bcc = orig->bcc + i;
+			sbuf_init(bcc, bcc_proto);
+			bcc->orig = orig;
+			bcc->bcc_index = i;
+		}
+	}
 
 	dns_connect(server);
 }
@@ -1188,7 +1247,7 @@ bool finish_client_login(PgSocket *client)
 
 	/* check if we know server signature */
 	if (!client->pool->welcome_msg_ready) {
-		log_debug("finish_client_login: no welcome message, pause");
+		log_info("finish_client_login: no welcome message, pause");
 		client->wait_for_welcome = 1;
 		pause_client(client);
 		if (cf_pause_mode == P_NONE)
@@ -1373,6 +1432,7 @@ bool use_server_socket(int fd, PgAddr *addr,
 
 	server->suspended = 1;
 	server->pool = pool;
+	log_info("setting B auth_user = %p (was %p)", user, server->auth_user);
 	server->auth_user = user;
 	server->connect_time = server->request_time = get_cached_time();
 	server->query_start = 0;

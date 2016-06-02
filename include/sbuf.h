@@ -82,6 +82,10 @@ struct SBuf {
 	sbuf_cb_t proto_cb;	/* protocol callback */
 
 	SBuf *dst;		/* target SBuf for current packet */
+	int bcc_index;
+	int bcc_count;
+	SBuf *bcc;
+	SBuf *orig;
 
 	IOBuf *io;		/* data buffer, lazily allocated */
 
@@ -139,7 +143,22 @@ static inline int sbuf_op_recv(SBuf *sbuf, void *buf, unsigned int len)
 
 static inline int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 {
-	return sbuf->ops->sbufio_send(sbuf, buf, len);
+	int res = sbuf->ops->sbufio_send(sbuf, buf, len);
+	if (res > 0) {
+		int i;
+		for (i = 0; i < sbuf->bcc_count; i++) {
+			int bccres;
+			SBuf *bcc = sbuf->bcc + i;
+			bccres = sbuf_op_send(bcc, buf, res);
+			if (bccres != res) {
+				log_warning(
+					"bcc #%d is falling behind (sent %d bytes of %d)",
+					i, bccres, res
+				);
+			}
+		}
+	}
+	return res;
 }
 
 static inline int sbuf_op_close(SBuf *sbuf)

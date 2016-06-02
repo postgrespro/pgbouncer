@@ -103,6 +103,7 @@ bool pktbuf_send_immediate(PktBuf *buf, PgSocket *sk)
 	if (res < 0) {
 		log_debug("pktbuf_send_immediate: %s", strerror(errno));
 	}
+
 	return res == amount;
 }
 
