@@ -518,6 +518,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 			res = handle_connect(server);
 		} else {
 			dns_connect(server);
+			res = true;
 		}
 		break;
 	case SBUF_EV_FLUSH:
@@ -622,6 +623,7 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		slog_info(server, "%d connections to make", server->connections);
 		Assert(server->connections > 0);
 		dns_connect(server);
+		res = true;
 		break;
 	default:
 		break;
