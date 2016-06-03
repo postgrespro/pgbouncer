@@ -454,7 +454,6 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	Assert(is_server_socket(server));
 	Assert(server->state != SV_FREE);
 
-	slog_info(server, "server_proto for sbuf %p", sbuf);
 
 	/* may happen if close failed */
 	if (server->state == SV_JUSTFREE)
@@ -470,7 +469,6 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_READ:
 		{
 			unsigned avail = mbuf_avail_for_read(data);
-			slog_info(server, "%u bytes available from a server", avail);
 		}
 
 		if (server->wait_sslchar) {
@@ -512,7 +510,6 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
 		server->connections--;
-		slog_info(server, "%d connections to make", server->connections);
 		if (server->connections <= 0) {
 			server->request_time = get_cached_time();
 			res = handle_connect(server);
@@ -595,7 +592,6 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	Assert(is_server_socket(server));
 	Assert(server->state != SV_FREE);
 
-	slog_info(server, "bcc_proto for sbuf %p", sbuf);
 
 	/* may happen if close failed */
 	if (server->state == SV_JUSTFREE)
@@ -611,7 +607,6 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_READ:
 		{
 			unsigned avail = mbuf_avail_for_read(data);
-			slog_info(server, "skipping %u bytes from a bcc", avail);
 			sbuf_prepare_skip(sbuf, avail);
 			res = true;
 			break;
@@ -620,7 +615,6 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_OK:
 		Assert(server->state == SV_LOGIN);
 		server->connections--;
-		slog_info(server, "%d connections to make", server->connections);
 		Assert(server->connections > 0);
 		dns_connect(server);
 		res = true;
