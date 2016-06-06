@@ -149,12 +149,18 @@ static inline int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 		for (i = 0; i < sbuf->bcc_count; i++) {
 			int bccres;
 			SBuf *bcc = sbuf->bcc + i;
+			if (!bcc->wait_type) continue; // ignore this bcc
+
 			bccres = sbuf_op_send(bcc, buf, res);
 			if (bccres != res) {
 				log_warning(
-					"bcc #%d is falling behind (sent %d bytes of %d)",
+					"bcc #%d has fallen behind (sent %d bytes of %d), connection is now useless",
 					i, bccres, res
 				);
+			}
+			if (!sbuf_close(bcc)) {
+				log_warning("bcc #%d has failed to close", i);
+				bcc->wait_type = 0;
 			}
 		}
 	}
