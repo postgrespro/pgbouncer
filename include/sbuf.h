@@ -157,10 +157,10 @@ static inline int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 					"bcc #%d has fallen behind (sent %d bytes of %d), connection is now useless",
 					i, bccres, res
 				);
-			}
-			if (!sbuf_close(bcc)) {
-				log_warning("bcc #%d has failed to close", i);
-				bcc->wait_type = 0;
+				if (!sbuf_close(bcc)) {
+					log_warning("bcc #%d has failed to close", i);
+					bcc->wait_type = 0;
+				}
 			}
 		}
 	}
