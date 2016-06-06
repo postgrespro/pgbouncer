@@ -467,10 +467,6 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		disconnect_client(server->link, false, "unexpected eof");
 		break;
 	case SBUF_EV_READ:
-		{
-			unsigned avail = mbuf_avail_for_read(data);
-		}
-
 		if (server->wait_sslchar) {
 			res = handle_sslchar(server, data);
 			break;
