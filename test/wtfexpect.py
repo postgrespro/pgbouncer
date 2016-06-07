@@ -1,0 +1,111 @@
+#!/usr/bin/python3
+
+import select
+import subprocess
+
+class WtfExpect():
+	def __init__(self):
+		self.procs = []
+		self.stdouts = {}
+		self.names = {}
+		self.retcodes = {}
+
+	def spawn(self, name, argv):
+		p = subprocess.Popen(
+			argv, bufsize=1,
+			stdin=subprocess.PIPE,
+			stdout=subprocess.PIPE,
+			stderr=subprocess.STDOUT,
+		)
+		self.procs.append(p)
+		self.stdouts[p.stdout] = p
+		self.names[p] = name
+		return p
+
+	def close(self, proc):
+		assert(proc in self.procs)
+		name = self.names[proc]
+		self.retcodes[name] = proc.wait()
+		self.procs.remove(proc)
+		del self.stdouts[proc.stdout]
+		del self.names[proc]
+
+	def readline(self, timeout=None):
+		rlist = self.stdouts.keys()
+		ready, _, _ = select.select(rlist, [], [], timeout)
+		if len(ready) > 0:
+			r = ready[0]
+			proc = self.stdouts[r]
+			name = self.names[proc]
+			l = r.readline().decode()
+			if len(l):
+				return name, l.strip()
+			else:
+				self.close(proc)
+				return name, None
+		else:
+			return None, None
+
+	def expect(self, patterns, timeout=None):
+		while self.alive():
+			name, line = self.readline(timeout)
+			if line is None:
+				return name, None
+			if name not in patterns:
+				continue
+			stripped = line.decode().strip()
+			if stripped in patterns[name]:
+				return name, stripped
+
+	def capture(self, *names):
+		results = {}
+		nameslist = list(names)
+		for name in names:
+			assert(name in self.names.values())
+			results[name] = {
+				'retcode': None,
+				'output': [],
+			}
+		while len(nameslist):
+			aname, line = self.readline()
+			if aname not in nameslist:
+				continue
+			if line is None:
+				results[aname]['retcode'] = self.getcode(aname)
+				nameslist.remove(aname)
+			else:
+				results[aname]['output'].append(line)
+		return results
+
+	def getcode(self, name):
+		if name in self.retcodes:
+			retcode = self.retcodes[name]
+			del self.retcodes[name]
+			return retcode
+		return None
+
+	def alive(self):
+		return len(self.procs) > 0
+
+	def finish(self):
+		for proc in self.procs:
+			proc.kill()
+		self.procs = []
+		self.stdouts = {}
+		self.names = {}
+		self.retcodes = {}
+
+#we = WtfExpect()
+#a = we.spawn('alpha', ['./dribble.py', '-1', 'test.txt'])
+#b = we.spawn('bravo', ['./dribble.py', '-2', 'test.txt'])
+#
+#patterns = {
+#	'alpha': ['cruel'],
+#	'bravo': ['world'],
+#}
+#while we.alive():
+#	name, line = we.expect(patterns)
+#	if line is None:
+#		print("eof from %s" % name)
+#		continue
+#	print("%s from %s" % (line, name))
