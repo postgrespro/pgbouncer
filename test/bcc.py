@@ -9,65 +9,6 @@ import configparser
 import getpass
 import wtfexpect
 
-stop = False
-
-#class PgBench(threading.Thread):
-#	def __init__(self, host, port, database, user, jobs=5, clients=5, seconds=5, init=False):
-#		super().__init__()
-#		self.host = host
-#		self.port = port
-#		self.database = database
-#		self.user = user
-#		self.jobs = jobs
-#		self.clients = clients
-#		self.seconds = seconds
-#		self.init = init
-#
-#	def run(self):
-#		print('pgbench started')
-#		with open('/tmp/pgbench.log', 'w+b') as logfile:
-#			params = [
-#				'-h', self.host,
-#				'-p', str(self.port),
-#				'-U', self.user,
-#			]
-#			if self.init:
-#				params.append('-i')
-#			else:
-#				params.extend([
-#					'-j', str(self.jobs),
-#					'-c', str(self.clients),
-#					'-T', str(self.seconds),
-#				])
-#			params.append(self.database)
-#			p = subprocess.Popen(
-#				['pgbench', *params],
-#				stdout=logfile,
-#				stderr=subprocess.STDOUT,
-#			)
-#			p.communicate()
-#		print('pgbench stopped')
-#
-#def postgres(host, port, datadir):
-#	p = pexpect.spawn(
-#		'postgres',
-#		[
-#			'-h', host,
-#			'-p', str(port),
-#			'-D', datadir,
-#		],
-#	)
-#	while not stop:
-#		index = p.expect([pexpect.EOF, pexpect.TIMEOUT], timeout=1)
-#		if index == 0:
-#			print('postgres %s EOFed' % datadir)
-#			break
-#		elif index == 1:
-#			print('waiting for postgres %s' % datadir)
-#	if p.isalive():
-#		p.kill(signal.SIGKILL)
-#		print('postgres %s killed' % datadir)
-
 def postgres(we, host, port, datadir):
 	name = 'postgres %s' % datadir
 	we.spawn(name, [
@@ -95,7 +36,6 @@ def initdbs(we, datadirs):
 		name, line = we.expect({})
 		assert(line is None)
 		retcode = we.getcode(name)
-		print("%s finished with retcode %d" % (name, retcode))
 		if retcode != 0:
 			ok = False
 	return ok
@@ -124,7 +64,6 @@ def pgbouncer(we, name, host, port, hosts, ports, database, user):
 	#confile = tempfile.NamedTemporaryFile(mode='w+')
 	fd, confilename = tempfile.mkstemp()
 	confile = os.fdopen(fd, 'w+')
-	print(confilename)
 	cfg.write(confile)
 	confile.flush()
 
@@ -148,16 +87,14 @@ def pgbench(we, name, host, port, database, user, jobs=5, clients=5, seconds=5, 
 	return we.spawn(name, ['pgbench', *params])
 
 def psql(we, name, host, port, database, user, cmd):
-	params = [
+	return we.spawn(name, [
 		'psql',
 		'-h', host,
 		'-p', str(port),
 		'-U', user,
 		'-c', cmd,
 		database,
-	]
-	print(params)
-	return we.spawn(name, params)
+	])
 
 def equal_results(we, names):
 	results = we.capture(*names)
@@ -170,8 +107,6 @@ def equal_results(we, names):
 	return True, outputs[0]
 
 def main():
-	global stop
-
 	datadirs = []
 	daemons = []
 
@@ -181,6 +116,7 @@ def main():
 	bouncer_port = 6543
 	database = 'postgres'
 	user = getpass.getuser()
+	bench_seconds = 10
 
 	we = wtfexpect.WtfExpect()
 
@@ -188,6 +124,7 @@ def main():
 
 	try:
 		# --------- prepare
+
 		hosts = []
 		ports = []
 		for i in range(instances):
@@ -196,44 +133,61 @@ def main():
 			ports.append(port)
 			datadirs.append(tempfile.mkdtemp())
 
+		print("initdb")
 		if not initdbs(we, datadirs):
 			raise Exception("failed to initialize databases")
 
+		print("launch postgres")
 		daemons.extend(postgri(we, hosts, ports, datadirs))
 
+		print("launch pgbouncer")
 		daemons.append(pgbouncer(
 			we, 'pgbouncer', host, bouncer_port,
 			hosts, ports,
 			database, user,
 		))
 
-		print("wait for 3 seconds")
+		print("wait 3 sec")
 		name, line = we.expect({}, timeout=3)
 		if name is not None:
 			raise Exception("has one of the daemons finished?")
 
 		# --------- bench
 
+		print("bench init")
 		pgbench(we, 'pgbench', host, bouncer_port, database, user, init=True)
 		if we.capture('pgbench')['pgbench']['retcode'] != 0:
 			raise Exception("pgbench -i failed")
 
-		pgbench(we, 'pgbench', host, bouncer_port, database, user, seconds=60)
+		print("bench %d sec" % bench_seconds)
+		pgbench(we, 'pgbench', host, bouncer_port, database, user, seconds=bench_seconds)
 		if we.capture('pgbench')['pgbench']['retcode'] != 0:
 			raise Exception("pgbench failed")
 
+		print("wait 3 sec")
+		name, line = we.expect({}, timeout=3)
+		if name is not None:
+			raise Exception("has one of the daemons finished?")
+
 		# --------- check
 
+		print("check")
 		psqls = []
 		for h, p in zip(hosts, ports):
 			name = 'psql-%d' % p
-			psql(we, name, h, p, database, user, 'select tid, bid, aid, delta from pgbench_history order by tid, bid, aid, delta')
+			psql(
+				we, name, h, p, database, user,
+				'''
+				select tid, bid, aid, delta
+				from pgbench_history
+				order by tid, bid, aid, delta
+				''',
+			)
 			psqls.append(name)
 		equal, result = equal_results(we, psqls)
 		if equal:
-			print("results are equal")
+			print("results are equal: %s" % result[-2])
 			ok = True
-			#print('\n'.join(result['output']))
 		else:
 			print("results not equal")
 			for name, res in result.items():
@@ -242,16 +196,11 @@ def main():
 					f.write('\n'.join(res['output']))
 					print("see %s" % filename)
 
-		print("wait for 3 seconds")
-		name, line = we.expect({}, timeout=3)
-		if name is not None:
-			raise Exception("has one of the daemons finished?")
-
 	finally:
-		print("finishing the processes")
-		we.finish()
+		# --------- cleanup
 
-		print("removing the datadirs")
+		print("cleanup")
+		we.finish()
 		for d in datadirs:
 			shutil.rmtree(d)
 
@@ -259,7 +208,7 @@ def main():
 		print("ok")
 		sys.exit(0)
 	else:
-		print("failed")
+		print("FAILED")
 		sys.exit(1)
 
 if __name__ == '__main__':

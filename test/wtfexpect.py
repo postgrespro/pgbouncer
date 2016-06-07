@@ -94,18 +94,3 @@ class WtfExpect():
 		self.stdouts = {}
 		self.names = {}
 		self.retcodes = {}
-
-#we = WtfExpect()
-#a = we.spawn('alpha', ['./dribble.py', '-1', 'test.txt'])
-#b = we.spawn('bravo', ['./dribble.py', '-2', 'test.txt'])
-#
-#patterns = {
-#	'alpha': ['cruel'],
-#	'bravo': ['world'],
-#}
-#while we.alive():
-#	name, line = we.expect(patterns)
-#	if line is None:
-#		print("eof from %s" % name)
-#		continue
-#	print("%s from %s" % (line, name))
