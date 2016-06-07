@@ -96,6 +96,28 @@ def psql(we, name, host, port, database, user, cmd):
 		database,
 	])
 
+# You have to add yourself to sudoers to be able to use iptables:
+#   <username> ALL = (root) NOPASSWD: /sbin/iptables
+rules = []
+def iptables_block_port(we, port):
+	rule = [
+		'INPUT',
+		'-p', 'tcp',
+		'--dport', str(port),
+		'-j', 'DROP',
+	]
+	rc, out = we.run(['sudo', 'iptables', '-A', *rule])
+	if rc == 0:
+		rules.append(rule)
+	else:
+		raise Exception("failed to add iptables rule: %s" % out)
+	return rc == 0
+
+def iptables_cleanup(we):
+	for rule in rules:
+		rc, out = we.run(['sudo', 'iptables', '-D', *rule])
+	rules.clear()
+
 def equal_results(we, names):
 	results = we.capture(*names)
 	retcodes = [x['retcode'] for x in results.values()]
@@ -110,7 +132,7 @@ def main():
 	datadirs = []
 	daemons = []
 
-	instances = 3
+	instances = 4
 	host = '127.0.0.1'
 	base_port = 5432
 	bouncer_port = 6543
@@ -175,6 +197,10 @@ def main():
 		if name != victim:
 			raise Exception("the victim would not die")
 
+		victim_port = ports[-2]
+		print("block port %s" % victim_port)
+		iptables_block_port(we, victim_port)
+
 		print("wait for bench to finish")
 		if we.capture('pgbench')['pgbench']['retcode'] != 0:
 			raise Exception("pgbench failed")
@@ -184,11 +210,13 @@ def main():
 		if name is not None:
 			raise Exception("has one of the daemons finished?")
 
+		iptables_cleanup(we)
+
 		# --------- check
 
 		print("check")
 		psqls = []
-		for h, p in zip(hosts[:-1], ports[:-1]):
+		for h, p in zip(hosts[:-2], ports[:-2]):
 			name = 'psql-%d' % p
 			psql(
 				we, name, h, p, database, user,
@@ -215,6 +243,7 @@ def main():
 		# --------- cleanup
 
 		print("cleanup")
+		iptables_cleanup(we)
 		we.finish()
 		for d in datadirs:
 			shutil.rmtree(d)

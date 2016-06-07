@@ -10,6 +10,14 @@ class WtfExpect():
 		self.names = {}
 		self.retcodes = {}
 
+	def run(self, argv):
+		p = subprocess.run(
+			argv,
+			stdout=subprocess.PIPE,
+			stderr=subprocess.STDOUT,
+		)
+		return p.returncode, p.stdout
+
 	def spawn(self, name, argv):
 		p = subprocess.Popen(
 			argv, bufsize=1,
