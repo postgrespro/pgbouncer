@@ -22,6 +22,16 @@ class WtfExpect():
 		self.names[p] = name
 		return p
 
+	def getproc(self, name):
+		for p, n in self.names.items():
+			if n == name:
+				return p
+		return None
+
+	def kill(self, name):
+		proc = self.getproc(name)
+		proc.kill()
+
 	def close(self, proc):
 		assert(proc in self.procs)
 		name = self.names[proc]

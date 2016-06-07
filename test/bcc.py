@@ -116,7 +116,7 @@ def main():
 	bouncer_port = 6543
 	database = 'postgres'
 	user = getpass.getuser()
-	bench_seconds = 10
+	bench_seconds = 60
 
 	we = wtfexpect.WtfExpect()
 
@@ -140,6 +140,8 @@ def main():
 		print("launch postgres")
 		daemons.extend(postgri(we, hosts, ports, datadirs))
 
+		victim = daemons[-1]
+
 		print("launch pgbouncer")
 		daemons.append(pgbouncer(
 			we, 'pgbouncer', host, bouncer_port,
@@ -159,8 +161,21 @@ def main():
 		if we.capture('pgbench')['pgbench']['retcode'] != 0:
 			raise Exception("pgbench -i failed")
 
-		print("bench %d sec" % bench_seconds)
+		print("launch bench %d sec" % bench_seconds)
 		pgbench(we, 'pgbench', host, bouncer_port, database, user, seconds=bench_seconds)
+
+		print("wait 3 sec")
+		name, line = we.expect({}, timeout=3)
+		if name is not None:
+			raise Exception("has one of the daemons finished?")
+
+		print("kill %s" % victim)
+		we.kill(victim)
+		name, line = we.expect({}, timeout=1)
+		if name != victim:
+			raise Exception("the victim would not die")
+
+		print("wait for bench to finish")
 		if we.capture('pgbench')['pgbench']['retcode'] != 0:
 			raise Exception("pgbench failed")
 
@@ -173,7 +188,7 @@ def main():
 
 		print("check")
 		psqls = []
-		for h, p in zip(hosts, ports):
+		for h, p in zip(hosts[:-1], ports[:-1]):
 			name = 'psql-%d' % p
 			psql(
 				we, name, h, p, database, user,
