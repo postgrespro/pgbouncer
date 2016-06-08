@@ -602,13 +602,13 @@ try_more:
 	/* how much data is available for sending */
 	avail = mbuf_avail_for_read(&sbuf->mbuf);
 
-	log_warning("bcc #%d has %d bytes to send", sbuf->bcc_index, avail);
+	log_noise("bcc #%d has %d bytes to send", sbuf->bcc_index, avail);
 
 	if (avail == 0)
 		return true;
 
 	if (sbuf->sock == 0) {
-		log_error("sbuf_send_pending_mbuf: no dst sock?");
+		log_error("sbuf_send_pending_mbuf: no sock?");
 		return false;
 	}
 
@@ -621,9 +621,9 @@ try_more:
 		}
 	} else if (res < 0) {
 		if (errno == EAGAIN) {
-			log_warning("bcc #%d write EAGAIN", sbuf->bcc_index);
+			log_noise("bcc #%d write EAGAIN", sbuf->bcc_index);
 		} else {
-			log_warning("bcc #%d error = %s", sbuf->bcc_index, strerror(errno));
+			log_warning("bcc #%d write error = %s", sbuf->bcc_index, strerror(errno));
 			sbuf_call_proto(sbuf, SBUF_EV_SEND_FAILED);
 		}
 		return false;
@@ -745,10 +745,6 @@ static bool allocate_iobuf(SBuf *sbuf)
 int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 {
 	int res = sbuf->ops->sbufio_send(sbuf, buf, len);
-	if (sbuf->bcc_index < 0) {
-		log_warning("sbuf_op_send %d bytes of %d to the main connection", res, len);
-	}
-
 	if (res > 0) {
 		int i;
 		for (i = 0; i < sbuf->bcc_count; i++) {
@@ -758,7 +754,7 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 			bcc->dst = bcc;
 
 			if (mbuf_written(&bcc->mbuf) + res > 1000000) {
-				log_error(
+				log_warning(
 					"bcc #%d has fallen behind (the buffer grew too"
 					" large), connection is now useless",
 					i
@@ -832,22 +828,22 @@ void sbuf_bcc_cb(int sock, short flags, void *arg)
 	Assert(sbuf->bcc_index >= 0);
 	if (flags & EV_READ) {
 		char buf[1024];
-		log_warning("bcc #%d is ready for a READ", sbuf->bcc_index);
+		log_noise("bcc #%d is ready for a READ", sbuf->bcc_index);
 		while (true) {
 			int got = sbuf_op_recv(sbuf, buf, sizeof(buf));
 			if (got > 0) {
-				log_warning("bcc #%d skipped %d bytes", sbuf->bcc_index, got);
+				log_noise("bcc #%d skipped %d bytes", sbuf->bcc_index, got);
 			} else if (got == 0) {
-				log_error("bcc #%d failed to skip", sbuf->bcc_index);
+				log_warning("bcc #%d failed to skip", sbuf->bcc_index);
 				break;
 			} else if (errno == EAGAIN) {
-				log_warning("bcc #%d read EAGAIN", sbuf->bcc_index);
+				log_noise("bcc #%d read EAGAIN", sbuf->bcc_index);
 				break;
 			}
 		}
 	}
 	if (flags & EV_WRITE) {
-		log_warning("bcc #%d is ready for a WRITE", sbuf->bcc_index);
+		log_noise("bcc #%d is ready for a WRITE", sbuf->bcc_index);
 		sbuf_send_pending_mbuf(sbuf);
 	}
 }
