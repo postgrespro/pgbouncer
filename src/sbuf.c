@@ -461,7 +461,6 @@ static bool sbuf_wait_for_data_forced(SBuf *sbuf)
 static void sbuf_send_cb(int sock, short flags, void *arg)
 {
 	SBuf *sbuf = arg;
-	bool res;
 
 	/* sbuf was closed before in this loop */
 	if (!sbuf->sock)
@@ -472,14 +471,21 @@ static void sbuf_send_cb(int sock, short flags, void *arg)
 
 	sbuf->wait_type = W_NONE;
 
-	/* prepare normal situation for sbuf_main_loop */
-	res = sbuf_wait_for_data(sbuf);
-	if (res) {
-		/* here we should certainly skip recv() */
-		sbuf_main_loop(sbuf, SKIP_RECV);
+	if (sbuf->bcc_index < 0) {
+		/* prepare normal situation for sbuf_main_loop */
+		bool res = sbuf_wait_for_data(sbuf);
+		if (res) {
+			/* here we should certainly skip recv() */
+			sbuf_main_loop(sbuf, SKIP_RECV);
+		} else {
+			/* drop if problems */
+			sbuf_call_proto(sbuf, SBUF_EV_SEND_FAILED);
+		}
 	} else {
-		/* drop if problems */
-		sbuf_call_proto(sbuf, SBUF_EV_SEND_FAILED);
+		bool allsent = sbuf_send_pending(sbuf);
+		if (!allsent) {
+			log_noise("bcc #%d still has something to send", sbuf->bcc_index);
+		}
 	}
 }
 
@@ -492,12 +498,14 @@ static bool sbuf_queue_send(SBuf *sbuf)
 
 	/* if false is returned, the socket will be closed later */
 
-	/* stop waiting for read events */
-	err = event_del(&sbuf->ev);
-	sbuf->wait_type = W_NONE; /* make sure its called only once */
-	if (err < 0) {
-		log_warning("sbuf_queue_send: event_del failed: %s", strerror(errno));
-		return false;
+	if (sbuf->bcc_index < 0) {
+		/* stop waiting for read events */
+		err = event_del(&sbuf->ev);
+		sbuf->wait_type = W_NONE; /* make sure its called only once */
+		if (err < 0) {
+			log_warning("sbuf_queue_send: event_del failed: %s", strerror(errno));
+			return false;
+		}
 	}
 
 	/* instead wait for EV_WRITE on destination socket */
@@ -648,6 +656,71 @@ static void sbuf_try_resync(SBuf *sbuf, bool release)
 	}
 }
 
+static bool allocate_iobuf(SBuf *sbuf)
+{
+	if (sbuf->io == NULL) {
+		sbuf->io = slab_alloc(iobuf_cache);
+		if (sbuf->io == NULL) {
+			sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
+			return false;
+		}
+		iobuf_reset(sbuf->io);
+	}
+	return true;
+}
+
+int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
+{
+	/*
+	 * Trick bcc sbufs into thinking that they are the recv
+	 * buffers supposed to send their data to dst. Instead
+	 * of actually recving data from socket, we feed the
+	 * data into the io buffer from the side and then call
+	 * the send_pending method.
+	 */
+	int res = sbuf->ops->sbufio_send(sbuf, buf, len);
+
+	int i;
+	for (i = 0; i < sbuf->bcc_count; i++) {
+		IOBuf *io;
+		uint8_t *dst;
+		int avail;
+		SBuf *bcc = sbuf->bcc + i;
+		if (!bcc->wait_type) continue; // ignore this bcc
+
+		sbuf_try_resync(bcc, false); // make room in the buffer
+		bcc->dst = bcc;
+
+		if (!allocate_iobuf(bcc)) continue;
+
+		io = bcc->io;
+		dst = io->buf + io->recv_pos;
+		avail = iobuf_amount_recv(io);
+		if (res > avail) {
+			log_warning(
+				"bcc #%d has fallen behind (can accomodate only %d bytes of %d), connection is now useless",
+				i, avail, res
+			);
+			if (!sbuf_close(bcc)) {
+				log_warning("bcc #%d has failed to close", i);
+				bcc->wait_type = 0;
+			}
+			continue;
+		}
+
+		memcpy(dst, buf, res);
+		io->recv_pos += res;
+		iobuf_tag_send(io, res);
+		bool allsent = sbuf_send_pending(bcc);
+		if (!allsent) {
+			log_noise("bcc #%d still has something to send", i);
+		}
+	}
+
+	return res;
+}
+
+
 /* actually ask kernel for more data */
 static bool sbuf_actual_recv(SBuf *sbuf, unsigned len)
 {
@@ -677,19 +750,6 @@ static void sbuf_recv_cb(int sock, short flags, void *arg)
 {
 	SBuf *sbuf = arg;
 	sbuf_main_loop(sbuf, DO_RECV);
-}
-
-static bool allocate_iobuf(SBuf *sbuf)
-{
-	if (sbuf->io == NULL) {
-		sbuf->io = slab_alloc(iobuf_cache);
-		if (sbuf->io == NULL) {
-			sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
-			return false;
-		}
-		iobuf_reset(sbuf->io);
-	}
-	return true;
 }
 
 /*

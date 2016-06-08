@@ -107,6 +107,7 @@ bool sbuf_tls_connect(SBuf *sbuf, const char *hostname)  _MUSTCHECK;
 bool sbuf_pause(SBuf *sbuf) _MUSTCHECK;
 void sbuf_continue(SBuf *sbuf);
 bool sbuf_close(SBuf *sbuf) _MUSTCHECK;
+int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len);
 
 /* proto_fn can use those functions to order behaviour */
 void sbuf_prepare_send(SBuf *sbuf, SBuf *dst, unsigned amount);
@@ -139,32 +140,6 @@ static inline bool sbuf_is_closed(SBuf *sbuf)
 static inline int sbuf_op_recv(SBuf *sbuf, void *buf, unsigned int len)
 {
 	return sbuf->ops->sbufio_recv(sbuf, buf, len);
-}
-
-static inline int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
-{
-	int res = sbuf->ops->sbufio_send(sbuf, buf, len);
-	if (res > 0) {
-		int i;
-		for (i = 0; i < sbuf->bcc_count; i++) {
-			int bccres;
-			SBuf *bcc = sbuf->bcc + i;
-			if (!bcc->wait_type) continue; // ignore this bcc
-
-			bccres = sbuf_op_send(bcc, buf, res);
-			if (bccres != res) {
-				log_warning(
-					"bcc #%d has fallen behind (sent %d bytes of %d), connection is now useless",
-					i, bccres, res
-				);
-				if (!sbuf_close(bcc)) {
-					log_warning("bcc #%d has failed to close", i);
-					bcc->wait_type = 0;
-				}
-			}
-		}
-	}
-	return res;
 }
 
 static inline int sbuf_op_close(SBuf *sbuf)
