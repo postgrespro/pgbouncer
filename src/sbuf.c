@@ -758,7 +758,7 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 			bcc->dst = bcc;
 
 			if (mbuf_written(&bcc->mbuf) + res > 1000000) {
-				log_warning(
+				log_error(
 					"bcc #%d has fallen behind (the buffer grew too"
 					" large), connection is now useless",
 					i

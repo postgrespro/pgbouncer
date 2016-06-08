@@ -594,16 +594,25 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		return false;
 
 	switch (evtype) {
+	case SBUF_EV_SEND_FAILED:
+	case SBUF_EV_RECV_FAILED:
+		log_error("bcc #%d has failed", sbuf->bcc_index);
+		if (!sbuf_close(sbuf)) {
+			log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
+			sbuf->wait_type = 0;
+		}
+		res = true;
+		break;
 	case SBUF_EV_CONNECT_FAILED:
 	case SBUF_EV_CONNECT_OK:
 		Assert(server->state == SV_LOGIN);
 		server->connections--;
 		Assert(server->connections > 0);
 		dns_connect(server);
-		event_set(&sbuf->ev, sbuf->sock, EV_WRITE | EV_READ | EV_PERSIST, sbuf_bcc_cb, sbuf);
 		res = true;
 		break;
 	default:
+		log_error("unknown evtype: %d", evtype);
 		Assert(false);
 		break;
 	}
