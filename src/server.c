@@ -594,28 +594,17 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		return false;
 
 	switch (evtype) {
-	case SBUF_EV_RECV_FAILED:
-		slog_noise(server, "bcc recv failed");
-		break;
-	case SBUF_EV_SEND_FAILED:
-		slog_noise(server, "bcc send failed");
-		break;
-	case SBUF_EV_READ:
-		{
-			unsigned avail = mbuf_avail_for_read(data);
-			sbuf_prepare_skip(sbuf, avail);
-			res = true;
-			break;
-		}
 	case SBUF_EV_CONNECT_FAILED:
 	case SBUF_EV_CONNECT_OK:
 		Assert(server->state == SV_LOGIN);
 		server->connections--;
 		Assert(server->connections > 0);
 		dns_connect(server);
+		event_set(&sbuf->ev, sbuf->sock, EV_WRITE | EV_READ | EV_PERSIST, sbuf_bcc_cb, sbuf);
 		res = true;
 		break;
 	default:
+		Assert(false);
 		break;
 	}
 	return res;
