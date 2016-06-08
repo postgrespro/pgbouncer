@@ -2,6 +2,7 @@
 
 import select
 import subprocess
+import time
 
 class WtfExpect():
 	def __init__(self):
@@ -65,8 +66,18 @@ class WtfExpect():
 			return None, None
 
 	def expect(self, patterns, timeout=None):
+		started = time.time()
 		while self.alive():
-			name, line = self.readline(timeout)
+			if timeout is not None:
+				t = time.time()
+				if t - started > timeout:
+					return None, None
+				elapsed = t - started
+				timeleft = timeout - elapsed
+			else:
+				timeleft = None
+
+			name, line = self.readline(timeleft)
 			if line is None:
 				return name, None
 			if name not in patterns:
