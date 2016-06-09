@@ -847,6 +847,14 @@ for this database.
 Otherwise PgBouncer tries to log into the destination database with client
 username, meaning that there will be one pool per user.
 
+bcc_host, bcc_port
+------------------
+
+Set ``bcc_host=`` and ``bcc_port=`` as many times, as many BCC-connections you
+need. A "blind carbon copy" connection will receive all the same queries and
+ignore all the results. It will not disrupt the main connection and will
+disconnect if it is slower or anything else goes wrong.
+
 auth_user
 ---------
 
