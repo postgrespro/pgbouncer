@@ -202,6 +202,7 @@ void change_server_state(PgSocket *server, SocketState newstate)
 		statlist_remove(&justfree_server_list, &server->head);
 		break;
 	case SV_LOGIN:
+		sbuf_stop_recording(&server->sbuf);
 		statlist_remove(&pool->new_server_list, &server->head);
 		break;
 	case SV_USED:
@@ -232,6 +233,7 @@ void change_server_state(PgSocket *server, SocketState newstate)
 		statlist_append(&justfree_server_list, &server->head);
 		break;
 	case SV_LOGIN:
+		sbuf_start_recording(&server->sbuf);
 		statlist_append(&pool->new_server_list, &server->head);
 		break;
 	case SV_USED:

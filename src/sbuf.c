@@ -334,6 +334,18 @@ bool sbuf_close(SBuf *sbuf)
 	return true;
 }
 
+void sbuf_start_recording(SBuf *sbuf)
+{
+	mbuf_rewind_writer(&sbuf->mbuf);
+	sbuf->record = true;
+}
+
+void sbuf_stop_recording(SBuf *sbuf)
+{
+	log_warning("recorded login sequence of %u bytes len", mbuf_written(&sbuf->mbuf));
+	sbuf->record = false;
+}
+
 /* proto_fn tells to send some bytes to socket */
 void sbuf_prepare_send(SBuf *sbuf, SBuf *dst, unsigned amount)
 {
@@ -747,6 +759,13 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 	int res = sbuf->ops->sbufio_send(sbuf, buf, len);
 	if (res > 0) {
 		int i;
+
+		if (sbuf->record) {
+			if (!mbuf_write(&sbuf->mbuf, buf, res)) {
+				log_error("couldn't record any further");
+			}
+		}
+
 		for (i = 0; i < sbuf->bcc_count; i++) {
 			SBuf *bcc = sbuf->bcc + i;
 			if (bcc->wait_type != W_BCC) continue; // ignore this bcc

@@ -86,6 +86,7 @@ struct SBuf {
 	int bcc_count;
 	SBuf *bcc;
 	SBuf *orig;
+	bool record;
 	struct MBuf mbuf;
 
 	IOBuf *io;		/* data buffer, lazily allocated */
@@ -100,6 +101,9 @@ struct SBuf {
 void sbuf_init(SBuf *sbuf, sbuf_cb_t proto_fn);
 bool sbuf_accept(SBuf *sbuf, int read_sock, bool is_unix)  _MUSTCHECK;
 bool sbuf_connect(SBuf *sbuf, const struct sockaddr *sa, int sa_len, int timeout_sec)  _MUSTCHECK;
+
+void sbuf_start_recording(SBuf *sbuf);
+void sbuf_stop_recording(SBuf *sbuf);
 
 void sbuf_tls_setup(void);
 bool sbuf_tls_accept(SBuf *sbuf)  _MUSTCHECK;
