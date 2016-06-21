@@ -382,6 +382,9 @@ static bool handle_connect(PgSocket *server)
 				  pga_str(&server->local_addr, buf, sizeof(buf)));
 	}
 
+	log_warning("enable the bccs that are ready");
+	sbuf_enable_bccs(&server->sbuf);
+
 	if (!statlist_empty(&pool->cancel_req_list)) {
 		slog_debug(server, "use it for pending cancel req");
 		/* if pending cancel req, send it */
@@ -505,13 +508,13 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_OK:
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
-		server->connections--;
-		if (server->connections <= 0) {
-			server->request_time = get_cached_time();
-			res = handle_connect(server);
-		} else {
+		server->connections++;
+		if (server->connections <= server->sbuf.bcc_count) {
 			dns_connect(server);
 			res = true;
+		} else {
+			server->request_time = get_cached_time();
+			res = handle_connect(server);
 		}
 		break;
 	case SBUF_EV_FLUSH:
@@ -604,12 +607,27 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_FAILED:
+		if (server->connections == server->sbuf.bcc_count + 1) {
+			if (!sbuf_close(sbuf)) {
+				log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
+				sbuf->wait_type = 0;
+			}
+		}
+		// fall through
 	case SBUF_EV_CONNECT_OK:
-		Assert(server->state == SV_LOGIN);
-		server->connections--;
-		Assert(server->connections > 0);
-		dns_connect(server);
-		res = true;
+		if (server->connections == server->sbuf.bcc_count + 1) {
+			res = true;
+		} else {
+			server->connections++;
+			Assert(server->state == SV_LOGIN);
+			if (server->connections <= server->sbuf.bcc_count) {
+				dns_connect(server);
+				res = true;
+			} else {
+				server->request_time = get_cached_time();
+				res = handle_connect(server);
+			}
+		}
 		break;
 	default:
 		log_error("unknown evtype: %d", evtype);

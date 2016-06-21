@@ -571,6 +571,7 @@ bool find_server(PgSocket *client)
 	PgPool *pool = client->pool;
 	PgSocket *server;
 	bool res;
+	int i;
 	bool varchange = false;
 
 	Assert(client->state == CL_ACTIVE || client->state == CL_LOGIN);
@@ -600,6 +601,21 @@ bool find_server(PgSocket *client)
 
 	}
 	Assert(!server || server->state == SV_IDLE);
+
+	if (server) {
+		for (i = 0; i < server->sbuf.bcc_count; i++) {
+			SBuf *bcc = server->sbuf.bcc + i;
+			if (!bcc->sock) {
+				log_warning("reconnecting bcc #%d\n", i);
+				dns_connect(server);
+			}
+		}
+	}
+
+	if (server) {
+		log_warning("enable the bccs that are ready");
+		sbuf_enable_bccs(&server->sbuf);
+	}
 
 	/* send var changes */
 	if (server) {
@@ -880,17 +896,37 @@ void disconnect_client(PgSocket *client, bool notify, const char *reason, ...)
  * Connection creation utilities
  */
 
+static int find_inactive_bcc(struct PgSocket *server)
+{
+	int i;
+	for (i = 0; i < server->sbuf.bcc_count; i++) {
+		SBuf *bcc = server->sbuf.bcc + i;
+		if (!bcc->sock) {
+			return i;
+		}
+	}
+	Assert(false); // should not happen
+	return -1;
+}
+
 static void connect_server(struct PgSocket *server, const struct sockaddr *sa, int salen)
 {
 	bool res;
 	int port;
+	int bccid;
 	SBuf *sbuf = &server->sbuf;
 
-	if (server->connections > 1) {
-		port = server->pool->db->bcc[server->connections - 2].port;
-		sbuf = sbuf->bcc + server->connections - 2;
-	} else {
+	if (server->connections == 0) {
 		port = server->pool->db->port;
+	} else if (server->connections <= server->pool->db->bcc_count) {
+		bccid = server->connections - 1;
+		port = server->pool->db->bcc[bccid].port;
+		sbuf = sbuf->bcc + bccid;
+	} else {
+		// bcc reconnection
+		bccid = find_inactive_bcc(server);
+		port = server->pool->db->bcc[bccid].port;
+		sbuf = sbuf->bcc + bccid;
 	}
 
 	/* fill remote_addr */
@@ -921,10 +957,10 @@ static void dns_callback(void *arg, const struct sockaddr *sa, int salen)
 	server->dns_token = NULL;
 
 	if (!sa) {
-		if (server->connections > 1) {
-			log_noise("failed to resolve a bcc address");
-		} else {
+		if (server->connections == 0) {
 			disconnect_server(server, true, "server dns lookup failed");
+		} else {
+			log_noise("failed to resolve a bcc address");
 		}
 		return;
 	} else if (sa->sa_family == AF_INET) {
@@ -944,10 +980,10 @@ static void dns_callback(void *arg, const struct sockaddr *sa, int salen)
 		slog_debug(server, "dns_callback: inet6: %s",
 			   sa2str(sa, buf, sizeof(buf)));
 	} else {
-		if (server->connections > 1) {
-			log_noise("unknown bcc address family: %d", sa->sa_family);
-		} else {
+		if (server->connections == 0) {
 			disconnect_server(server, true, "unknown address family: %d", sa->sa_family);
+		} else {
+			log_noise("unknown bcc address family: %d", sa->sa_family);
 		}
 		return;
 	}
@@ -962,22 +998,31 @@ void dns_connect(struct PgSocket *server)
 	struct sockaddr_in6 sa_in6;
 	struct sockaddr *sa;
 	struct PgDatabase *db = server->pool->db;
-	const char *host;
+	const char *host = NULL;
 	int port;
 	const char *unix_dir;
 	int sa_len;
 	int res;
 
-	if (server->connections > 1) {
-		PgBcc *bcc = db->bcc + server->connections - 2;
-		host = bcc->host;
-		port = bcc->port;
-		slog_info(server, "connecting to bcc #%d %s:%d", server->connections - 2, host, port);
-	} else {
+	int bccid;
+	slog_info(server, "connections = %d", server->connections);
+	if (server->connections == 0) {
 		host = db->host;
 		port = db->port;
 		slog_info(server, "connecting to server %s:%d", host, port);
+	} else if (server->connections <= db->bcc_count) {
+		bccid = server->connections - 1;
+		host = db->bcc[bccid].host;
+		port = db->bcc[bccid].port;
+		slog_info(server, "connecting to bcc #%d %s:%d", bccid, host, port);
+	} else {
+		// bcc reconnection
+		bccid = find_inactive_bcc(server);
+		host = db->bcc[bccid].host;
+		port = db->bcc[bccid].port;
+		slog_info(server, "reconnecting to bcc #%d %s:%d", bccid, host, port);
 	}
+	Assert(host != NULL); // should not happen
 
 	if (!host || host[0] == '/') {
 		slog_noise(server, "unix socket: %s", sa_un.sun_path);
@@ -986,10 +1031,12 @@ void dns_connect(struct PgSocket *server)
 		unix_dir = host ? host : cf_unix_socket_dir;
 		if (!unix_dir || !*unix_dir) {
 			log_error("Unix socket dir not configured: %s", db->name);
-			if (server->connections > 1) {
-				slog_info(server, "cannot connect to bcc #%d %s:%d", server->connections - 2, host, port);
-			} else {
+			if (server->connections == 0) {
 				disconnect_server(server, false, "cannot connect");
+			} else if (server->connections <= db->bcc_count) {
+				slog_info(server, "cannot connect to bcc #%d %s:%d", bccid, host, port);
+			} else {
+				slog_info(server, "cannot reconnect to bcc #%d %s:%d", bccid, host, port);
 			}
 			return;
 		}
@@ -1171,7 +1218,7 @@ allow_new:
 	}
 
 	/* initialize it */
-	server->connections = pool->db->bcc_count + 1;
+	server->connections = 0;
 	server->pool = pool;
 	log_info("setting A auth_user = %p (was %p)", server->pool->user, server->auth_user);
 	server->auth_user = server->pool->user;

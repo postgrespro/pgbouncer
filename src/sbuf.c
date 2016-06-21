@@ -52,6 +52,7 @@ enum WaitType {
 	W_RECV,
 	W_SEND,
 	W_BCC,
+	W_BCC_JOIN,
 	W_ONCE
 };
 
@@ -114,7 +115,6 @@ void sbuf_init(SBuf *sbuf, sbuf_cb_t proto_fn)
 	sbuf->bcc_index = -1;
 	sbuf->proto_cb = proto_fn;
 	sbuf->ops = &raw_sbufio_ops;
-	mbuf_init_dynamic(&sbuf->mbuf);
 }
 
 /* got new socket from accept() */
@@ -172,6 +172,8 @@ bool sbuf_connect(SBuf *sbuf, const struct sockaddr *sa, int sa_len, int timeout
 
 	timeout.tv_sec = timeout_sec;
 	timeout.tv_usec = 0;
+
+	mbuf_init_dynamic(&sbuf->mbuf);
 
 	/* launch connection */
 	res = safe_connect(sock, sa, sa_len);
@@ -435,7 +437,7 @@ static bool sbuf_setup_bcc_events(SBuf *sbuf)
 		log_warning("sbuf_setup_bcc_events: event_add failed: %s", strerror(errno));
 		return false;
 	}
-	sbuf->wait_type = W_BCC;
+	sbuf->wait_type = W_BCC_JOIN;
 	return true;
 }
 
@@ -772,30 +774,32 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 
 			bcc->dst = bcc;
 
-			if (mbuf_written(&bcc->mbuf) + res > 1000000) {
-				log_warning(
-					"bcc #%d has fallen behind (the buffer grew too"
-					" large), connection is now useless",
-					i
-				);
-				if (!sbuf_close(bcc)) {
-					log_warning("bcc #%d has failed to close", i);
-					bcc->wait_type = 0;
+			if (!bcc->skip) {
+				if (mbuf_written(&bcc->mbuf) + res > 1000000) {
+					log_warning(
+						"bcc #%d has fallen behind (the buffer grew too"
+						" large), connection is now useless",
+						i
+					);
+					if (!sbuf_close(bcc)) {
+						log_warning("bcc #%d has failed to close", i);
+						bcc->wait_type = 0;
+					}
+					continue;
 				}
-				continue;
-			}
 
-			if (!mbuf_write(&bcc->mbuf, buf, res)) {
-				log_warning(
-					"bcc #%d has fallen behind (cannot allocate more"
-					" memory for the buffer), connection is now useless",
-					i
-				);
-				if (!sbuf_close(bcc)) {
-					log_warning("bcc #%d has failed to close", i);
-					bcc->wait_type = 0;
+				if (!mbuf_write(&bcc->mbuf, buf, res)) {
+					log_warning(
+						"bcc #%d has fallen behind (cannot allocate more"
+						" memory for the buffer), connection is now useless",
+						i
+					);
+					if (!sbuf_close(bcc)) {
+						log_warning("bcc #%d has failed to close", i);
+						bcc->wait_type = 0;
+					}
+					continue;
 				}
-				continue;
 			}
 
 			bool allsent = sbuf_send_pending_mbuf(bcc);
@@ -853,10 +857,13 @@ void sbuf_bcc_cb(int sock, short flags, void *arg)
 			if (got > 0) {
 				log_noise("bcc #%d skipped %d bytes", sbuf->bcc_index, got);
 			} else if (got == 0) {
-				log_warning("bcc #%d failed to skip", sbuf->bcc_index);
+				log_warning("bcc #%d eof", sbuf->bcc_index);
 				break;
 			} else if (errno == EAGAIN) {
 				log_noise("bcc #%d read EAGAIN", sbuf->bcc_index);
+				break;
+			} else {
+				log_noise("bcc #%d error: %s", sbuf->bcc_index, strerror(errno));
 				break;
 			}
 		}
@@ -866,6 +873,26 @@ void sbuf_bcc_cb(int sock, short flags, void *arg)
 		sbuf_send_pending_mbuf(sbuf);
 	}
 }
+
+void sbuf_enable_bccs(SBuf *sbuf)
+{
+	int i;
+	for (i = 0; i < sbuf->bcc_count; i++) {
+		SBuf *bcc = sbuf->bcc + i;
+		if (bcc->wait_type == W_BCC_JOIN) {
+			log_warning("enabling bcc #%d", i);
+			if (mbuf_write_raw_mbuf(&bcc->mbuf, &sbuf->mbuf)) {
+				log_warning("login sequence copied to to bcc #%d", i);
+			} else {
+				log_error("failed to copy login sequence to bcc #%d", i);
+			}
+			bcc->wait_type = W_BCC;
+		} else {
+			log_warning("bcc #%d is not ready", i);
+		}
+	}
+}
+
 
 /*
  * Main recv-parse-send-repeat loop.

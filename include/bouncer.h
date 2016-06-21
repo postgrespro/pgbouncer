@@ -330,7 +330,7 @@ struct PgSocket {
 	struct List head;		/* list header */
 	PgSocket *link;		/* the dest of packets */
 
-	int connections;	/* the number of addresses to resolve (BCCs + main) */
+	int connections;	/* the number connections made (BCCs + main) */
 
 	PgPool *pool;		/* parent pool, if NULL not yet assigned */
 
