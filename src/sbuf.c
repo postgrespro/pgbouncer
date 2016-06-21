@@ -609,7 +609,6 @@ static bool sbuf_send_pending_mbuf(SBuf *sbuf)
 {
 	int res, avail;
 
-	AssertActive(sbuf);
 	Assert(sbuf->bcc_index >= 0);
 
 try_more:
@@ -849,6 +848,7 @@ void sbuf_bcc_cb(int sock, short flags, void *arg)
 {
 	SBuf *sbuf = arg;
 	Assert(sbuf->bcc_index >= 0);
+	if (!sbuf->sock) return;
 	if (flags & EV_READ) {
 		char buf[1024];
 		log_noise("bcc #%d is ready for a READ", sbuf->bcc_index);
@@ -858,12 +858,14 @@ void sbuf_bcc_cb(int sock, short flags, void *arg)
 				log_noise("bcc #%d skipped %d bytes", sbuf->bcc_index, got);
 			} else if (got == 0) {
 				log_warning("bcc #%d eof", sbuf->bcc_index);
+				sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
 				break;
 			} else if (errno == EAGAIN) {
 				log_noise("bcc #%d read EAGAIN", sbuf->bcc_index);
 				break;
 			} else {
-				log_noise("bcc #%d error: %s", sbuf->bcc_index, strerror(errno));
+				log_error("bcc #%d error: %s", sbuf->bcc_index, strerror(errno));
+				sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
 				break;
 			}
 		}
@@ -887,8 +889,6 @@ void sbuf_enable_bccs(SBuf *sbuf)
 				log_error("failed to copy login sequence to bcc #%d", i);
 			}
 			bcc->wait_type = W_BCC;
-		} else {
-			log_warning("bcc #%d is not ready", i);
 		}
 	}
 }
