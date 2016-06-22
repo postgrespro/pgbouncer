@@ -15,6 +15,7 @@ pgbouncer_SOURCES = \
 	src/pktbuf.c \
 	src/pooler.c \
 	src/proto.c \
+	src/reconnect.c \
 	src/sbuf.c \
 	src/server.c \
 	src/stats.c \
@@ -34,6 +35,7 @@ pgbouncer_SOURCES = \
 	include/pktbuf.h \
 	include/pooler.h \
 	include/proto.h \
+	include/reconnect.h \
 	include/sbuf.h \
 	include/server.h \
 	include/stats.h \

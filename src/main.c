@@ -905,6 +905,7 @@ int main(int argc, char *argv[])
 	signal_setup();
 	janitor_setup();
 	stats_setup();
+	reconnect_setup();
 
 	if (did_takeover) {
 		takeover_finish();

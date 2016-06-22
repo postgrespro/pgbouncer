@@ -571,7 +571,6 @@ bool find_server(PgSocket *client)
 	PgPool *pool = client->pool;
 	PgSocket *server;
 	bool res;
-	int i;
 	bool varchange = false;
 
 	Assert(client->state == CL_ACTIVE || client->state == CL_LOGIN);
@@ -603,17 +602,7 @@ bool find_server(PgSocket *client)
 	Assert(!server || server->state == SV_IDLE);
 
 	if (server) {
-		for (i = 0; i < server->sbuf.bcc_count; i++) {
-			SBuf *bcc = server->sbuf.bcc + i;
-			if (!bcc->sock) {
-				log_warning("reconnecting bcc #%d\n", i);
-				dns_connect(server);
-			}
-		}
-	}
-
-	if (server) {
-		log_warning("enable the bccs that are ready");
+		log_warning("enable the bccs that are ready (on link)");
 		sbuf_enable_bccs(&server->sbuf);
 	}
 

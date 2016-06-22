@@ -773,32 +773,30 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 
 			bcc->dst = bcc;
 
-			if (!bcc->skip) {
-				if (mbuf_written(&bcc->mbuf) + res > 1000000) {
-					log_warning(
-						"bcc #%d has fallen behind (the buffer grew too"
-						" large), connection is now useless",
-						i
-					);
-					if (!sbuf_close(bcc)) {
-						log_warning("bcc #%d has failed to close", i);
-						bcc->wait_type = 0;
-					}
-					continue;
+			if (mbuf_written(&bcc->mbuf) + res > 1000000) {
+				log_warning(
+					"bcc #%d has fallen behind (the buffer grew too"
+					" large), connection is now useless",
+					i
+				);
+				if (!sbuf_close(bcc)) {
+					log_warning("bcc #%d has failed to close", i);
+					bcc->wait_type = 0;
 				}
+				continue;
+			}
 
-				if (!mbuf_write(&bcc->mbuf, buf, res)) {
-					log_warning(
-						"bcc #%d has fallen behind (cannot allocate more"
-						" memory for the buffer), connection is now useless",
-						i
-					);
-					if (!sbuf_close(bcc)) {
-						log_warning("bcc #%d has failed to close", i);
-						bcc->wait_type = 0;
-					}
-					continue;
+			if (!mbuf_write(&bcc->mbuf, buf, res)) {
+				log_warning(
+					"bcc #%d has fallen behind (cannot allocate more"
+					" memory for the buffer), connection is now useless",
+					i
+				);
+				if (!sbuf_close(bcc)) {
+					log_warning("bcc #%d has failed to close", i);
+					bcc->wait_type = 0;
 				}
+				continue;
 			}
 
 			bool allsent = sbuf_send_pending_mbuf(bcc);

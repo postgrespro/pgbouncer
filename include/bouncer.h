@@ -103,6 +103,7 @@ extern int cf_sbuf_len;
 #include "proto.h"
 #include "objects.h"
 #include "stats.h"
+#include "reconnect.h"
 #include "takeover.h"
 #include "janitor.h"
 #include "hba.h"
