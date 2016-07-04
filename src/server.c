@@ -606,11 +606,9 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_FAILED:
-		if (server->connections == server->sbuf.bcc_count + 1) {
-			if (!sbuf_close(sbuf)) {
-				log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
-				sbuf->wait_type = 0;
-			}
+		if (!sbuf_close(sbuf)) {
+			log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
+			sbuf->wait_type = 0;
 		}
 		// fall through
 	case SBUF_EV_CONNECT_OK:
