@@ -382,7 +382,6 @@ static bool handle_connect(PgSocket *server)
 				  pga_str(&server->local_addr, buf, sizeof(buf)));
 	}
 
-	log_warning("enable the bccs that are ready");
 	sbuf_enable_bccs(&server->sbuf);
 
 	if (!statlist_empty(&pool->cancel_req_list)) {

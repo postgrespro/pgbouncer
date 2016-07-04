@@ -602,7 +602,6 @@ bool find_server(PgSocket *client)
 	Assert(!server || server->state == SV_IDLE);
 
 	if (server) {
-		log_warning("enable the bccs that are ready (on link)");
 		sbuf_enable_bccs(&server->sbuf);
 	}
 
@@ -617,7 +616,6 @@ bool find_server(PgSocket *client)
 
 	/* link or send to waiters list */
 	if (server) {
-		log_warning("linking client %p with server %p", client, server);
 		client->link = server;
 		server->link = client;
 		change_server_state(server, SV_ACTIVE);
