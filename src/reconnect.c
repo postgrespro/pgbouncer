@@ -26,8 +26,6 @@ static void reconnect_bccs(int s, short flags, void *arg)
 	struct List *item;
 	struct timeval period = { RECONNECT_PERIOD, 0 };
 
-	log_warning("reconnect_bccs()");
-
 	statlist_for_each(item, &pool_list) {
 		PgPool *pool = container_of(item, PgPool, head);
 		serverlist_reconnect_bccs(&pool->active_server_list);
