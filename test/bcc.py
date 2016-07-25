@@ -163,6 +163,10 @@ def main():
 		daemons.extend(postgri(we, hosts, ports, datadirs))
 
 		victim = daemons[-1]
+		victim_port = ports[-2]
+
+		print("block port %s" % victim_port)
+		iptables_block_port(we, victim_port)
 
 		print("launch pgbouncer")
 		daemons.append(pgbouncer(
@@ -171,44 +175,54 @@ def main():
 			database, user,
 		))
 
-		print("wait 3 sec")
-		name, line = we.expect({}, timeout=3)
-		if name is not None:
-			raise Exception("has one of the daemons (%s) finished?" % name)
+		print("wait until pgbouncer gets up")
+		while we.alive('pgbouncer'):
+			name, line = we.readline(timeout=1)
+			if line is not None:
+				print("[%s] %s" % (name, line))
+			if name == 'pgbouncer' and 'process up' in line:
+				break
 
 		# --------- bench
 
 		print("bench init")
-		pgbench(we, 'pgbench', host, bouncer_port, database, user, init=True)
-		if we.capture('pgbench')['pgbench']['retcode'] != 0:
+		pgbench(we, 'pgbench', host, bouncer_port, database, user, init=True, jobs=20, clients=20)
+		while we.alive('pgbench'):
+			name, line = we.readline(timeout=1)
+			if line is not None:
+				print("[%s] %s" % (name, line))
+		if we.getcode('pgbench') != 0:
 			raise Exception("pgbench -i failed")
 
 		print("launch bench %d sec" % bench_seconds)
 		pgbench(we, 'pgbench', host, bouncer_port, database, user, seconds=bench_seconds)
 
 		print("wait 3 sec")
-		name, line = we.expect({}, timeout=3)
+		name, line = we.expect({'pgbouncer': ''}, timeout=3)
 		if name is not None:
-			raise Exception("has one of the daemons finished?")
+			if line is None:
+				raise Exception("has one of the daemons (%s) finished?" % name)
+			else:
+				print('pgbouncer: ' + line)
 
 		we.kill(victim)
 		print("%s killed" % victim)
 
-		victim_port = ports[-2]
-		print("block port %s" % victim_port)
-		iptables_block_port(we, victim_port)
+#		print("block port %s" % victim_port)
+#		iptables_block_port(we, victim_port)
 
 		print("wait for bench to finish")
-		if we.capture('pgbench')['pgbench']['retcode'] != 0:
-			raise Exception("pgbench failed")
+		while we.alive('pgbench'):
+			name, line = we.readline(timeout=1)
+			if line is not None:
+				print("[%s] %s" % (name, line))
 
 		print("wait 3 sec")
-		name, line = we.expect({}, timeout=3)
+		name, line = we.expect({'pgbouncer': ''}, timeout=3)
 		if name is not None:
-			raise Exception("has one of the daemons finished?")
+			raise Exception("has one of the daemons (%s) finished?" % name)
 
 		iptables_cleanup(we)
-
 		# --------- check
 
 		print("check")
