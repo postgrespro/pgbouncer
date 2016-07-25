@@ -882,7 +882,7 @@ void sbuf_enable_bccs(SBuf *sbuf)
 		if (bcc->wait_type == W_BCC_JOIN) {
 			log_warning("enabling bcc #%d", i);
 			if (mbuf_write_raw_mbuf(&bcc->mbuf, &sbuf->mbuf)) {
-				log_warning("login sequence copied to to bcc #%d", i);
+				log_warning("login sequence copied to bcc #%d", i);
 			} else {
 				log_error("failed to copy login sequence to bcc #%d", i);
 			}
