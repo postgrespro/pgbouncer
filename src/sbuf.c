@@ -769,8 +769,6 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 
 		for (i = 0; i < sbuf->bcc_count; i++) {
 			SBuf *bcc = sbuf->bcc + i;
-			if (bcc->wait_type != W_BCC) continue; // ignore this bcc
-
 			bcc->dst = bcc;
 
 			if (mbuf_written(&bcc->mbuf) + res > 1000000) {
@@ -799,9 +797,11 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 				continue;
 			}
 
-			bool allsent = sbuf_send_pending_mbuf(bcc);
-			if (!allsent) {
-				log_noise("bcc #%d still has something to send", i);
+			if (bcc->wait_type == W_BCC) {
+				bool allsent = sbuf_send_pending_mbuf(bcc);
+				if (!allsent) {
+					log_noise("bcc #%d still has something to send", i);
+				}
 			}
 		}
 	}

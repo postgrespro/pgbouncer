@@ -11,7 +11,7 @@ static void serverlist_reconnect_bccs(struct StatList *list)
 
 		for (i = 0; i < server->sbuf.bcc_count; i++) {
 			SBuf *bcc = server->sbuf.bcc + i;
-			if (!bcc->sock) {
+			if ((bcc->wait_type == 0) && !bcc->sock) {
 				slog_warning(server, "reconnecting bcc #%d\n", i);
 				dns_connect(server);
 			}

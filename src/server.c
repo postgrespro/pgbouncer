@@ -443,6 +443,7 @@ static bool handle_sslchar(PgSocket *server, struct MBuf *data)
 /* callback from SBuf */
 bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 {
+	int i;
 	bool res = false;
 	PgSocket *server;
 	PgPool *pool;
@@ -507,14 +508,14 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_OK:
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
-		server->connections++;
-		if (server->connections <= server->sbuf.bcc_count) {
+		server->connections = 1;
+		for (i = 0; i < server->sbuf.bcc_count; i++) {
+			server->connections++;
+			log_warning("%p connecting bcc #%d", server, i);
 			dns_connect(server);
-			res = true;
-		} else {
-			server->request_time = get_cached_time();
-			res = handle_connect(server);
 		}
+		server->request_time = get_cached_time();
+		res = handle_connect(server);
 		break;
 	case SBUF_EV_FLUSH:
 		res = true;
@@ -606,25 +607,16 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_FAILED:
+		log_warning("%p failed to connect to bcc #%d (sbuf = %p, socket = %d)", server, sbuf->bcc_index, sbuf, sbuf->sock);
 		if (!sbuf_close(sbuf)) {
 			log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
 			sbuf->wait_type = 0;
 		}
-		// fall through
+		res = true;
+		break;
 	case SBUF_EV_CONNECT_OK:
-		if (server->connections == server->sbuf.bcc_count + 1) {
-			res = true;
-		} else {
-			server->connections++;
-			Assert(server->state == SV_LOGIN);
-			if (server->connections <= server->sbuf.bcc_count) {
-				dns_connect(server);
-				res = true;
-			} else {
-				server->request_time = get_cached_time();
-				res = handle_connect(server);
-			}
-		}
+		log_warning("%p connected to bcc #%d", server, sbuf->bcc_index);
+		res = true;
 		break;
 	default:
 		log_error("unknown evtype: %d", evtype);
