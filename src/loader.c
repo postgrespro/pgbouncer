@@ -266,11 +266,8 @@ bool parse_database(void *base, const char *name, const char *connstr)
 				bcc_idx++;
 			}
 			bcc_hosts[bcc_idx] = val;
+			bcc_ports[bcc_idx] = "5432";
 		} else if (strcmp("bcc_port", key) == 0) {
-			if (bcc_idx >= bcc_count) {
-				log_error("%s: syntax error in connstring: too many 'bcc_port' elements", name);
-				goto fail;
-			}
 			bcc_ports[bcc_idx] = val;
 		} else if (strcmp("user", key) == 0) {
 			username = val;
