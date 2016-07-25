@@ -117,6 +117,9 @@ char *cf_autodb_connstr; /* here is "" different from NULL */
 
 usec_t cf_autodb_idle_timeout;
 
+usec_t cf_bcc_connect_timeout;
+usec_t cf_bcc_reconnect_period;
+
 usec_t cf_server_lifetime;
 usec_t cf_server_idle_timeout;
 usec_t cf_server_connect_timeout;
@@ -228,6 +231,9 @@ CF_ABS("user", CF_STR, cf_username, CF_NO_RELOAD, NULL),
 #endif
 
 CF_ABS("autodb_idle_timeout", CF_TIME_USEC, cf_autodb_idle_timeout, 0, "3600"),
+
+CF_ABS("bcc_connect_timeout", CF_TIME_USEC, cf_bcc_connect_timeout, 0, "1"),
+CF_ABS("bcc_reconnect_period", CF_TIME_USEC, cf_bcc_reconnect_period, 0, "10"),
 
 CF_ABS("server_reset_query", CF_STR, cf_server_reset_query, 0, "DISCARD ALL"),
 CF_ABS("server_reset_query_always", CF_INT, cf_server_reset_query_always, 0, "0"),

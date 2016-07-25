@@ -903,14 +903,18 @@ static void connect_server(struct PgSocket *server, const struct sockaddr *sa, i
 	int bccid;
 	SBuf *sbuf = &server->sbuf;
 
+	usec_t timeout = cf_server_connect_timeout;
+
 	if (server->connections == 0) {
 		port = server->pool->db->port;
 	} else if (server->connections <= server->pool->db->bcc_count) {
+		timeout = cf_bcc_connect_timeout;
 		bccid = server->connections - 1;
 		port = server->pool->db->bcc[bccid].port;
 		sbuf = sbuf->bcc + bccid;
 	} else {
 		// bcc reconnection
+		timeout = cf_bcc_connect_timeout;
 		bccid = find_inactive_bcc(server);
 		port = server->pool->db->bcc[bccid].port;
 		sbuf = sbuf->bcc + bccid;
@@ -927,8 +931,7 @@ static void connect_server(struct PgSocket *server, const struct sockaddr *sa, i
 	slog_debug(server, "launching new connection to server");
 
 	/* start connecting */
-	res = sbuf_connect(sbuf, sa, salen,
-			   cf_server_connect_timeout / USEC);
+	res = sbuf_connect(sbuf, sa, salen, timeout / USEC);
 	if (!res) {
 		log_warning("failed to launch new connection");
 	}
@@ -1134,7 +1137,7 @@ void launch_new_connection(PgPool *pool)
 
 	/* allow only small number of connection attempts at a time */
 	if (!statlist_empty(&pool->new_server_list)) {
-		log_debug("launch_new_connection: already progress");
+		log_warning("launch_new_connection: already progress");
 		return;
 	}
 
@@ -1142,7 +1145,7 @@ void launch_new_connection(PgPool *pool)
 	if (pool->last_connect_failed) {
 		usec_t now = get_cached_time();
 		if (now - pool->last_connect_time < cf_server_login_retry) {
-			log_debug("launch_new_connection: last failed, wait");
+			log_warning("launch_new_connection: last failed, wait");
 			return;
 		}
 	}
@@ -1161,7 +1164,7 @@ void launch_new_connection(PgPool *pool)
 				}
 			}
 		}
-		log_debug("launch_new_connection: pool full (%d >= %d)",
+		log_warning("launch_new_connection: pool full (%d >= %d)",
 				total, pool->db->pool_size);
 		return;
 	}

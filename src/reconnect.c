@@ -19,12 +19,10 @@ static void serverlist_reconnect_bccs(struct StatList *list)
 	}
 }
 
-#define RECONNECT_PERIOD 10
-
 static void reconnect_bccs(int s, short flags, void *arg)
 {
 	struct List *item;
-	struct timeval period = { RECONNECT_PERIOD, 0 };
+	struct timeval period = { cf_bcc_reconnect_period / USEC, cf_bcc_reconnect_period % USEC };
 
 	statlist_for_each(item, &pool_list) {
 		PgPool *pool = container_of(item, PgPool, head);
@@ -39,7 +37,7 @@ static void reconnect_bccs(int s, short flags, void *arg)
 
 void reconnect_setup(void)
 {
-	struct timeval period = { RECONNECT_PERIOD, 0 };
+	struct timeval period = { cf_bcc_reconnect_period / USEC, cf_bcc_reconnect_period % USEC };
 
 	evtimer_set(&ev_reconnect, reconnect_bccs, NULL);
 	safe_evtimer_add(&ev_reconnect, &period);
