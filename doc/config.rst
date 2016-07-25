@@ -520,6 +520,20 @@ Works only with UDNS backend (``--with-udns`` to configure).
 
 Default: 0.0 (disabled)
 
+bcc_connect_timeout
+-------------------
+
+If connection to a BCC server won't finish in this amount of time, the bcc
+will be skipped. [seconds]
+
+Default: 1.0
+
+bcc_reconnect_period
+--------------------
+
+How frequently to try reconnecting to skipped BCC servers. [seconds]
+
+Default: 10.0
 
 TLS settings
 ============
