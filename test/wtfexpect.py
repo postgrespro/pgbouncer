@@ -4,66 +4,114 @@ import select
 import subprocess
 import time
 
-class WtfExpect():
-	def __init__(self):
-		self.procs = []
-		self.stdouts = {}
-		self.names = {}
-		self.retcodes = {}
-
-	def run(self, argv):
-		p = subprocess.run(
-			argv,
-			stdout=subprocess.PIPE,
-			stderr=subprocess.STDOUT,
-		)
-		return p.returncode, p.stdout
-
-	def spawn(self, name, argv):
-		p = subprocess.Popen(
-			argv, bufsize=1,
+class Proc():
+	def __init__(self, name, *argv):
+		self.p = subprocess.Popen(
+			argv, bufsize=0,
 			stdin=subprocess.PIPE,
 			stdout=subprocess.PIPE,
 			stderr=subprocess.STDOUT,
 		)
-		self.procs.append(p)
-		self.stdouts[p.stdout] = p
-		self.names[p] = name
-		return p
+		self.name = name
+		self.accum = bytes()
 
-	def getproc(self, name):
-		for p, n in self.names.items():
-			if n == name:
-				return p
-		return None
+	def fileno(self):
+		return self.p.stdout.fileno()
+
+	def readlines(self):
+		newbytes = self.p.stdout.read(1024)
+		if len(newbytes):
+			self.accum += newbytes
+			*newlines, self.accum = self.accum.split(b'\n')
+			return [l.decode() for l in newlines]
+		else:
+			self.p.stdout.close()
+			if len(self.accum):
+				return [self.accum.decode(), None]
+			else:
+				return [None]
+
+	def eof(self):
+		return self.p.stdout.closed
+
+	def kill(self):
+		self.p.kill()
+
+	def wait(self):
+		return self.p.wait()
+
+class WtfExpect():
+	def __init__(self):
+		self.procs = {}
+		self.retcodes = {}
+		self.lines = []
+
+	def __enter__(self):
+		return self
+
+	def __exit__(self, *exc):
+		self.finish()
+		return False
+
+	def run(self, argv):
+#		p = subprocess.run(
+#			argv,
+#			stdout=subprocess.PIPE,
+#			stderr=subprocess.STDOUT,
+#		)
+		p = subprocess.Popen(
+			argv,
+			stdout=subprocess.PIPE,
+			stderr=subprocess.STDOUT,
+		)
+		stdout, stderr = p.communicate()
+		return p.returncode, stdout
+
+	def spawn(self, name, *argv):
+		print("spawn " + ' '.join(argv))
+		assert(name not in self.procs)
+		self.procs[name] = Proc(name, *argv)
+		return True
 
 	def kill(self, name):
-		proc = self.getproc(name)
-		proc.kill()
-
-	def close(self, proc):
-		assert(proc in self.procs)
-		name = self.names[proc]
-		self.retcodes[name] = proc.wait()
-		self.procs.remove(proc)
-		del self.stdouts[proc.stdout]
-		del self.names[proc]
+		print("kill %s" % name)
+		assert(name in self.procs)
+		self.procs[name].kill()
+		self.retcodes[name] = self.procs[name].wait()
+		del self.procs[name]
 
 	def readline(self, timeout=None):
-		rlist = self.stdouts.keys()
-		ready, _, _ = select.select(rlist, [], [], timeout)
-		if len(ready) > 0:
-			r = ready[0]
-			proc = self.stdouts[r]
-			name = self.names[proc]
-			l = r.readline().decode()
-			if len(l):
-				return name, l.strip()
+		if len(self.lines):
+			return self.lines.pop(0)
+
+		started = time.time()
+		while self.alive():
+			if timeout is not None:
+				t = time.time()
+				if t - started > timeout:
+					return None, None
+				elapsed = t - started
+				timeleft = timeout - elapsed
+				if timeleft < 0:
+					break
 			else:
-				self.close(proc)
-				return name, None
-		else:
-			return None, None
+				timeleft = None
+
+			active = [p for p in self.procs.values() if not p.eof()]
+			if timeout is None:
+				ready, _, _ = select.select(active, [], [])
+			else:
+				ready, _, _ = select.select(active, [], [], timeleft)
+			if len(ready):
+				for proc in ready:
+					for line in proc.readlines():
+						self.lines.append((proc.name, line))
+						if line is None:
+							self.kill(proc.name)
+				if len(self.lines):
+					return self.lines.pop(0)
+
+		return None, None
 
 	def expect(self, patterns, timeout=None):
 		started = time.time()
@@ -82,15 +130,13 @@ class WtfExpect():
 				return name, None
 			if name not in patterns:
 				continue
-			stripped = line.decode().strip()
-			if stripped in patterns[name]:
-				return name, stripped
+			if line in patterns[name]:
+				return name, line
 
 	def capture(self, *names):
 		results = {}
 		nameslist = list(names)
 		for name in names:
-			assert(name in self.names.values())
 			results[name] = {
 				'retcode': None,
 				'output': [],
@@ -113,13 +159,15 @@ class WtfExpect():
 			return retcode
 		return None
 
-	def alive(self):
-		return len(self.procs) > 0
+	def alive(self, name=None):
+		if name is not None:
+			return name in self.procs
+		else:
+			return len(self.procs) > 0
 
 	def finish(self):
-		for proc in self.procs:
+		for proc in self.procs.values():
 			proc.kill()
-		self.procs = []
-		self.stdouts = {}
-		self.names = {}
+		self.procs = {}
 		self.retcodes = {}
+		self.lines = []

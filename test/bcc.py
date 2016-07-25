@@ -11,12 +11,12 @@ import wtfexpect
 
 def postgres(we, host, port, datadir):
 	name = 'postgres %s' % datadir
-	we.spawn(name, [
+	we.spawn(name,
 		'postgres',
 		'-h', host,
 		'-p', str(port),
 		'-D', datadir,
-	])
+	)
 	return name
 
 def postgri(we, hosts, ports, datadirs):
@@ -29,7 +29,7 @@ def postgri(we, hosts, ports, datadirs):
 def initdbs(we, datadirs):
 	for d in datadirs:
 		name = 'initdb %s' % d
-		we.spawn(name, ['initdb', d])
+		we.spawn(name, 'initdb', d)
 
 	ok = True
 	while we.alive():
@@ -67,7 +67,7 @@ def pgbouncer(we, name, host, port, hosts, ports, database, user):
 	cfg.write(confile)
 	confile.flush()
 
-	return we.spawn(name, ['./pgbouncer', confilename])
+	return we.spawn(name, './pgbouncer', confilename)
 
 def pgbench(we, name, host, port, database, user, jobs=5, clients=5, seconds=5, init=False):
 	params = [
@@ -84,17 +84,17 @@ def pgbench(we, name, host, port, database, user, jobs=5, clients=5, seconds=5, 
 			'-T', str(seconds),
 		])
 	params.append(database)
-	return we.spawn(name, ['pgbench', *params])
+	return we.spawn(name, 'pgbench', *params)
 
 def psql(we, name, host, port, database, user, cmd):
-	return we.spawn(name, [
+	return we.spawn(name,
 		'psql',
 		'-h', host,
 		'-p', str(port),
 		'-U', user,
 		'-c', cmd,
 		database,
-	])
+	)
 
 # You have to add yourself to sudoers to be able to use iptables:
 #   <username> ALL = (root) NOPASSWD: /sbin/iptables
@@ -106,7 +106,7 @@ def iptables_block_port(we, port):
 		'--dport', str(port),
 		'-j', 'DROP',
 	]
-	rc, out = we.run(['sudo', 'iptables', '-A', *rule])
+	rc, out = we.run(['sudo', 'iptables', '-A'] + rule)
 	if rc == 0:
 		rules.append(rule)
 	else:
@@ -115,7 +115,7 @@ def iptables_block_port(we, port):
 
 def iptables_cleanup(we):
 	for rule in rules:
-		rc, out = we.run(['sudo', 'iptables', '-D', *rule])
+		rc, out = we.run(['sudo', 'iptables', '-D'] + rule)
 	rules.clear()
 
 def equal_results(we, names):
@@ -174,7 +174,7 @@ def main():
 		print("wait 3 sec")
 		name, line = we.expect({}, timeout=3)
 		if name is not None:
-			raise Exception("has one of the daemons finished?")
+			raise Exception("has one of the daemons (%s) finished?" % name)
 
 		# --------- bench
 
@@ -191,11 +191,8 @@ def main():
 		if name is not None:
 			raise Exception("has one of the daemons finished?")
 
-		print("kill %s" % victim)
 		we.kill(victim)
-		name, line = we.expect({}, timeout=1)
-		if name != victim:
-			raise Exception("the victim would not die")
+		print("%s killed" % victim)
 
 		victim_port = ports[-2]
 		print("block port %s" % victim_port)
