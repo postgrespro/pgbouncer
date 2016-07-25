@@ -991,7 +991,7 @@ void dns_connect(struct PgSocket *server)
 	int sa_len;
 	int res;
 
-	int bccid;
+	int bccid = -1;
 	slog_info(server, "connections = %d", server->connections);
 	if (server->connections == 0) {
 		host = db->host;
