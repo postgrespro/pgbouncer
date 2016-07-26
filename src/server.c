@@ -443,14 +443,13 @@ static bool handle_sslchar(PgSocket *server, struct MBuf *data)
 /* callback from SBuf */
 bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 {
-	int i;
 	bool res = false;
 	PgSocket *server;
 	PgPool *pool;
 	PktHdr pkt;
 	char infobuf[96];
 
-	Assert(sbuf->bcc_index < 0);
+	Assert(sbuf->orig == NULL);
 	server = container_of(sbuf, PgSocket, sbuf);
 	pool = server->pool;
 
@@ -508,10 +507,8 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_OK:
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
-		server->connections = 1;
-		for (i = 0; i < server->sbuf.bcc_count; i++) {
-			server->connections++;
-			log_warning("%p connecting bcc #%d", server, i);
+		if (server->sbuf.bcc) {
+			slog_warning(server, "connecting bcc");
 			dns_connect(server);
 		}
 		server->request_time = get_cached_time();
@@ -584,7 +581,6 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	bool res = false;
 	PgSocket *server;
 
-	Assert(sbuf->bcc_index >= 0);
 	Assert(sbuf->orig != NULL);
 	server = container_of(sbuf->orig, PgSocket, sbuf);
 
@@ -599,27 +595,27 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	switch (evtype) {
 	case SBUF_EV_SEND_FAILED:
 	case SBUF_EV_RECV_FAILED:
-		log_error("bcc #%d has failed", sbuf->bcc_index);
+		slog_error(server, "bcc i/o failed");
 		if (!sbuf_close(sbuf)) {
-			log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
+			slog_warning(server, "bcc also failed to close");
 			sbuf->wait_type = 0;
 		}
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_FAILED:
-		log_warning("%p failed to connect to bcc #%d (sbuf = %p, socket = %d)", server, sbuf->bcc_index, sbuf, sbuf->sock);
+		slog_warning(server, "failed to connect to bcc");
 		if (!sbuf_close(sbuf)) {
-			log_warning("bcc #%d has also failed to close", sbuf->bcc_index);
+			slog_warning(server, "bcc failed to close");
 			sbuf->wait_type = 0;
 		}
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_OK:
-		log_warning("%p connected to bcc #%d", server, sbuf->bcc_index);
+		slog_info(server, "connected to bcc");
 		res = true;
 		break;
 	default:
-		log_error("unknown evtype: %d", evtype);
+		slog_error(server, "unknown evtype: %d on bcc", evtype);
 		Assert(false);
 		break;
 	}

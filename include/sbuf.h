@@ -82,8 +82,6 @@ struct SBuf {
 	sbuf_cb_t proto_cb;	/* protocol callback */
 
 	SBuf *dst;		/* target SBuf for current packet */
-	int bcc_index;
-	int bcc_count;
 	SBuf *bcc;
 	SBuf *orig;
 	bool record;

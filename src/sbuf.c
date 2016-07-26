@@ -112,7 +112,6 @@ static void sbuf_tls_handshake_cb(int fd, short flags, void *_sbuf);
 void sbuf_init(SBuf *sbuf, sbuf_cb_t proto_fn)
 {
 	memset(sbuf, 0, sizeof(SBuf));
-	sbuf->bcc_index = -1;
 	sbuf->proto_cb = proto_fn;
 	sbuf->ops = &raw_sbufio_ops;
 }
@@ -254,7 +253,7 @@ bool sbuf_continue_with_callback(SBuf *sbuf, sbuf_libevent_cb user_cb)
 	int err;
 
 	AssertActive(sbuf);
-	Assert(sbuf->bcc_index < 0);
+	Assert(sbuf->orig == NULL);
 
 	event_set(&sbuf->ev, sbuf->sock, EV_READ | EV_PERSIST,
 		  user_cb, sbuf);
@@ -296,15 +295,11 @@ bool sbuf_use_callback_once(SBuf *sbuf, short ev, sbuf_libevent_cb user_cb)
 /* socket cleanup & close: keeps .handler and .arg values */
 bool sbuf_close(SBuf *sbuf)
 {
-	int i;
-	for (i = 0; i < sbuf->bcc_count; i++) {
-		bool bccres = sbuf_close(sbuf->bcc + i);
+	if (sbuf->bcc) {
+		bool bccres = sbuf_close(sbuf->bcc);
 		if (!bccres) {
 			log_warning("failed to close bcc sbuf");
 		}
-	}
-
-	if (sbuf->bcc) {
 		free(sbuf->bcc);
 		sbuf->bcc = NULL;
 	}
@@ -344,7 +339,7 @@ void sbuf_start_recording(SBuf *sbuf)
 
 void sbuf_stop_recording(SBuf *sbuf)
 {
-	log_warning("recorded login sequence of %u bytes len", mbuf_written(&sbuf->mbuf));
+	log_info("recorded login sequence of %u bytes len", mbuf_written(&sbuf->mbuf));
 	sbuf->record = false;
 }
 
@@ -429,7 +424,7 @@ static bool sbuf_call_proto(SBuf *sbuf, int event)
 static bool sbuf_setup_bcc_events(SBuf *sbuf)
 {
 	int err;
-	Assert(sbuf->bcc_index >= 0);
+	Assert(sbuf->orig != NULL);
 
 	event_set(&sbuf->ev, sbuf->sock, EV_READ | EV_WRITE | EV_PERSIST | EV_ET, sbuf_bcc_cb, sbuf);
 	err = event_add(&sbuf->ev, NULL);
@@ -445,7 +440,7 @@ static bool sbuf_setup_bcc_events(SBuf *sbuf)
 static bool sbuf_wait_for_data(SBuf *sbuf)
 {
 	int err;
-	Assert(sbuf->bcc_index < 0);
+	Assert(sbuf->orig == NULL);
 
 	event_set(&sbuf->ev, sbuf->sock, EV_READ | EV_PERSIST, sbuf_recv_cb, sbuf);
 	err = event_add(&sbuf->ev, NULL);
@@ -504,7 +499,7 @@ static void sbuf_send_cb(int sock, short flags, void *arg)
 
 	AssertSanity(sbuf);
 	Assert(sbuf->wait_type == W_SEND);
-	Assert(sbuf->bcc_index < 0);
+	Assert(sbuf->orig == NULL);
 
 	sbuf->wait_type = W_NONE;
 
@@ -560,7 +555,7 @@ static bool sbuf_send_pending(SBuf *sbuf)
 
 	AssertActive(sbuf);
 	Assert(sbuf->dst || iobuf_amount_pending(io) == 0);
-	Assert(sbuf->bcc_index < 0);
+	Assert(sbuf->orig == NULL);
 
 try_more:
 	/* how much data is available for sending */
@@ -609,13 +604,13 @@ static bool sbuf_send_pending_mbuf(SBuf *sbuf)
 {
 	int res, avail;
 
-	Assert(sbuf->bcc_index >= 0);
+	Assert(sbuf->orig != NULL);
 
 try_more:
 	/* how much data is available for sending */
 	avail = mbuf_avail_for_read(&sbuf->mbuf);
 
-	log_noise("bcc #%d has %d bytes to send", sbuf->bcc_index, avail);
+	log_noise("have %d bytes for bcc", avail);
 
 	if (avail == 0)
 		return true;
@@ -634,9 +629,9 @@ try_more:
 		}
 	} else if (res < 0) {
 		if (errno == EAGAIN) {
-			log_noise("bcc #%d write EAGAIN", sbuf->bcc_index);
+			log_noise("bcc write EAGAIN");
 		} else {
-			log_warning("bcc #%d write error = %s", sbuf->bcc_index, strerror(errno));
+			log_warning("bcc write error = %s", strerror(errno));
 			sbuf_call_proto(sbuf, SBUF_EV_SEND_FAILED);
 		}
 		return false;
@@ -713,7 +708,7 @@ static bool sbuf_process_pending(SBuf *sbuf)
 		sbuf->pkt_remain -= avail;
 	}
 
-	if (sbuf->bcc_index < 0) {
+	if (sbuf->orig == NULL) {
 		return sbuf_send_pending(sbuf);
 	} else {
 		return sbuf_send_pending_mbuf(sbuf);
@@ -725,7 +720,7 @@ static void sbuf_try_resync(SBuf *sbuf, bool release)
 {
 	IOBuf *io = sbuf->io;
 
-	if (io && sbuf->bcc_index >= 0) {
+	if (io && (sbuf->orig != NULL)) {
 		log_debug("resync: done=%d, parse=%d, recv=%d",
 			  io->done_pos, io->parse_pos, io->recv_pos);
 	}
@@ -755,54 +750,55 @@ static bool allocate_iobuf(SBuf *sbuf)
 	return true;
 }
 
+#define BCC_BUFFER_LEN (1024 * 1024)
 int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 {
+	SBuf *bcc;
 	int res = sbuf->ops->sbufio_send(sbuf, buf, len);
-	if (res > 0) {
-		int i;
+	if (res <= 0) return res;
 
-		if (sbuf->record) {
-			if (!mbuf_write(&sbuf->mbuf, buf, res)) {
-				log_error("couldn't record any further");
-			}
+	if (sbuf->record) {
+		if (!mbuf_write(&sbuf->mbuf, buf, res)) {
+			log_error("couldn't record any further");
+		}
+		return res;
+	}
+
+	bcc = sbuf->bcc;
+	if (bcc == NULL) return res;
+
+	bcc->dst = bcc;
+
+	if (mbuf_written(&bcc->mbuf) + res > BCC_BUFFER_LEN) {
+		log_warning(
+				"bcc has fallen behind (the buffer grew too"
+				" large), connection is now useless"
+			   );
+		if (!sbuf_close(bcc)) {
+			log_warning("bcc has failed to close");
+			bcc->wait_type = 0;
 		}
 
-		for (i = 0; i < sbuf->bcc_count; i++) {
-			SBuf *bcc = sbuf->bcc + i;
-			bcc->dst = bcc;
+		return res;
+	}
 
-			if (mbuf_written(&bcc->mbuf) + res > 1000000) {
-				log_warning(
-					"bcc #%d has fallen behind (the buffer grew too"
-					" large), connection is now useless",
-					i
-				);
-				if (!sbuf_close(bcc)) {
-					log_warning("bcc #%d has failed to close", i);
-					bcc->wait_type = 0;
-				}
-				continue;
-			}
+	if (!mbuf_write(&bcc->mbuf, buf, res)) {
+		log_warning(
+				"bcc has fallen behind (cannot allocate more"
+				" memory for the buffer), connection is now useless"
+			   );
+		if (!sbuf_close(bcc)) {
+			log_warning("bcc has failed to close");
+			bcc->wait_type = 0;
+		}
 
-			if (!mbuf_write(&bcc->mbuf, buf, res)) {
-				log_warning(
-					"bcc #%d has fallen behind (cannot allocate more"
-					" memory for the buffer), connection is now useless",
-					i
-				);
-				if (!sbuf_close(bcc)) {
-					log_warning("bcc #%d has failed to close", i);
-					bcc->wait_type = 0;
-				}
-				continue;
-			}
+		return res;
+	}
 
-			if (bcc->wait_type == W_BCC) {
-				bool allsent = sbuf_send_pending_mbuf(bcc);
-				if (!allsent) {
-					log_noise("bcc #%d still has something to send", i);
-				}
-			}
+	if (bcc->wait_type == W_BCC) {
+		bool allsent = sbuf_send_pending_mbuf(bcc);
+		if (!allsent) {
+			log_noise("bcc still has something to send");
 		}
 	}
 
@@ -845,46 +841,45 @@ static void sbuf_recv_cb(int sock, short flags, void *arg)
 void sbuf_bcc_cb(int sock, short flags, void *arg)
 {
 	SBuf *sbuf = arg;
-	Assert(sbuf->bcc_index >= 0);
+	Assert(sbuf->orig != NULL);
 	if (!sbuf->sock) return;
 	if (flags & EV_READ) {
 		char buf[1024];
-		log_noise("bcc #%d is ready for a READ", sbuf->bcc_index);
+		log_noise("bcc is ready for a READ");
 		while (true) {
 			int got = sbuf_op_recv(sbuf, buf, sizeof(buf));
 			if (got > 0) {
-				log_noise("bcc #%d skipped %d bytes", sbuf->bcc_index, got);
+				log_noise("bcc skipped %d bytes", got);
 			} else if (got == 0) {
-				log_warning("bcc #%d eof", sbuf->bcc_index);
+				log_warning("bcc eof");
 				sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
 				break;
 			} else if (errno == EAGAIN) {
-				log_noise("bcc #%d read EAGAIN", sbuf->bcc_index);
+				log_noise("bcc read EAGAIN");
 				break;
 			} else {
-				log_error("bcc #%d error: %s", sbuf->bcc_index, strerror(errno));
+				log_error("bcc error: %s", strerror(errno));
 				sbuf_call_proto(sbuf, SBUF_EV_RECV_FAILED);
 				break;
 			}
 		}
 	}
 	if (flags & EV_WRITE) {
-		log_noise("bcc #%d is ready for a WRITE", sbuf->bcc_index);
+		log_noise("bcc is ready for a WRITE");
 		sbuf_send_pending_mbuf(sbuf);
 	}
 }
 
 void sbuf_enable_bccs(SBuf *sbuf)
 {
-	int i;
-	for (i = 0; i < sbuf->bcc_count; i++) {
-		SBuf *bcc = sbuf->bcc + i;
+	if (sbuf->bcc) {
+		SBuf *bcc = sbuf->bcc;
 		if (bcc->wait_type == W_BCC_JOIN) {
-			log_warning("enabling bcc #%d", i);
+			log_warning("enabling bcc");
 			if (mbuf_write_raw_mbuf(&bcc->mbuf, &sbuf->mbuf)) {
-				log_warning("login sequence copied to bcc #%d", i);
+				log_info("login sequence copied to bcc");
 			} else {
-				log_error("failed to copy login sequence to bcc #%d", i);
+				log_error("failed to copy login sequence to bcc");
 			}
 			bcc->wait_type = W_BCC;
 		}
@@ -1018,7 +1013,7 @@ static void sbuf_connect_cb(int sock, short flags, void *arg)
 			goto failed;
 		if (!sbuf_call_proto(sbuf, SBUF_EV_CONNECT_OK))
 			return;
-		if (sbuf->bcc_index < 0) {
+		if (sbuf->orig == NULL) {
 			if (!sbuf_wait_for_data(sbuf))
 				goto failed;
 		} else {

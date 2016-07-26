@@ -132,9 +132,10 @@ def main():
 	datadirs = []
 	daemons = []
 
-	instances = 4
 	host = '127.0.0.1'
-	base_port = 5432
+	port = 5432
+	bcc_host = '127.0.0.1'
+	bcc_port = 5433
 	bouncer_port = 6543
 	database = 'postgres'
 	user = getpass.getuser()
@@ -147,31 +148,32 @@ def main():
 	try:
 		# --------- prepare
 
-		hosts = []
-		ports = []
-		for i in range(instances):
-			port = base_port + i
-			hosts.append(host)
-			ports.append(port)
-			datadirs.append(tempfile.mkdtemp())
+		datadirs.append(tempfile.mkdtemp())
+		datadirs.append(tempfile.mkdtemp())
 
 		print("initdb")
 		if not initdbs(we, datadirs):
 			raise Exception("failed to initialize databases")
 
 		print("launch postgres")
-		daemons.extend(postgri(we, hosts, ports, datadirs))
+		notready = postgri(we, [host, bcc_host], [port, bcc_port], datadirs)
+		daemons.extend(notready)
+		while len(notready) > 0:
+			name, line = we.readline(timeout=1)
+			if name in notready and 'database system is ready to accept connections' in line:
+				print("%s ready" % name)
+				notready.remove(name)
 
-		victim = daemons[-1]
-		victim_port = ports[-2]
-
-		print("block port %s" % victim_port)
-		iptables_block_port(we, victim_port)
+#		victim = daemons[-1]
+#		victim_port = ports[-2]
+#
+#		print("block port %s" % victim_port)
+#		iptables_block_port(we, victim_port)
 
 		print("launch pgbouncer")
 		daemons.append(pgbouncer(
 			we, 'pgbouncer', host, bouncer_port,
-			hosts, ports,
+			[host, bcc_host], [port, bcc_port],
 			database, user,
 		))
 
@@ -205,8 +207,8 @@ def main():
 			else:
 				print('pgbouncer: ' + line)
 
-		we.kill(victim)
-		print("%s killed" % victim)
+#		we.kill(victim)
+#		print("%s killed" % victim)
 
 #		print("block port %s" % victim_port)
 #		iptables_block_port(we, victim_port)
@@ -227,7 +229,7 @@ def main():
 
 		print("check")
 		psqls = []
-		for h, p in zip(hosts[:-2], ports[:-2]):
+		for h, p in [(host, port), (bcc_host, bcc_port)]:
 			name = 'psql-%d' % p
 			psql(
 				we, name, h, p, database, user,

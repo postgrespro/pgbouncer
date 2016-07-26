@@ -9,10 +9,10 @@ static void serverlist_reconnect_bccs(struct StatList *list)
 		int i;
 		PgSocket *server = container_of(item, PgSocket, head);
 
-		for (i = 0; i < server->sbuf.bcc_count; i++) {
-			SBuf *bcc = server->sbuf.bcc + i;
+		if (server->sbuf.bcc) {
+			SBuf *bcc = server->sbuf.bcc;
 			if ((bcc->wait_type == 0) && !bcc->sock) {
-				slog_warning(server, "reconnecting bcc #%d\n", i);
+				slog_warning(server, "reconnecting bcc");
 				dns_connect(server);
 			}
 		}

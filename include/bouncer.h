@@ -274,11 +274,6 @@ struct PgUser {
 	int connection_count;	/* how much connections are used by user now */
 };
 
-struct PgBcc {
-	const char *host;	/* host or unix socket name */
-	int port;
-};
-
 /*
  * A database entry from config.
  */
@@ -300,8 +295,8 @@ struct PgDatabase {
 	const char *host;	/* host or unix socket name */
 	int port;
 
-	int bcc_count;
-	struct PgBcc *bcc;
+	const char *bcc_host;
+	int bcc_port;
 
 	int pool_size;		/* max server connections in one pool */
 	int res_pool_size;	/* additional server connections in case of trouble */
@@ -330,8 +325,6 @@ struct PgDatabase {
 struct PgSocket {
 	struct List head;		/* list header */
 	PgSocket *link;		/* the dest of packets */
-
-	int connections;	/* the number connections made (BCCs + main) */
 
 	PgPool *pool;		/* parent pool, if NULL not yet assigned */
 

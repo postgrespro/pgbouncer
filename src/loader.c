@@ -187,15 +187,12 @@ bool parse_database(void *base, const char *name, const char *connstr)
 	int dbname_ofs;
 	int pool_mode = POOL_INHERIT;
 
-	int bcc_count = 0;
-	int bcc_idx = 0;
-	const char **bcc_hosts = NULL;
-	const char **bcc_ports = NULL;
-
 	char *tmp_connstr;
 	const char *dbname = name;
 	char *host = NULL;
 	char *port = "5432";
+	char *bcc_host = NULL;
+	char *bcc_port = "5432";
 	char *username = NULL;
 	char *password = "";
 	char *auth_username = NULL;
@@ -206,6 +203,7 @@ bool parse_database(void *base, const char *name, const char *connstr)
 	char *appname = NULL;
 
 	int v_port;
+	int v_bcc_port;
 
 	cv.value_p = &pool_mode;
 	cv.extra = (const void *)pool_mode_map;
@@ -228,18 +226,7 @@ bool parse_database(void *base, const char *name, const char *connstr)
 		} else if (!key[0]) {
 			break;
 		}
-		if (strcmp("bcc_host", key) == 0) {
-			bcc_count++;
-		}
 	}
-
-	bcc_hosts = malloc(sizeof(char*) * bcc_count);
-	bcc_ports = malloc(sizeof(char*) * bcc_count);
-	for (bcc_idx = 0; bcc_idx < bcc_count; bcc_idx++) {
-		bcc_hosts[bcc_idx] = NULL;
-		bcc_ports[bcc_idx] = NULL;
-	}
-	bcc_idx = 0;
 
 	free(tmp_connstr);
 	tmp_connstr = strdup(connstr);
@@ -262,13 +249,9 @@ bool parse_database(void *base, const char *name, const char *connstr)
 		} else if (strcmp("port", key) == 0) {
 			port = val;
 		} else if (strcmp("bcc_host", key) == 0) {
-			if (bcc_hosts[bcc_idx] != NULL) {
-				bcc_idx++;
-			}
-			bcc_hosts[bcc_idx] = val;
-			bcc_ports[bcc_idx] = "5432";
+			bcc_host = val;
 		} else if (strcmp("bcc_port", key) == 0) {
-			bcc_ports[bcc_idx] = val;
+			bcc_port = val;
 		} else if (strcmp("user", key) == 0) {
 			username = val;
 		} else if (strcmp("password", key) == 0) {
@@ -312,34 +295,34 @@ bool parse_database(void *base, const char *name, const char *connstr)
 		goto fail;
 	}
 
+	/* bcc_port= */
+	v_bcc_port = atoi(bcc_port);
+	if (v_bcc_port == 0) {
+		log_error("skipping database %s because"
+			  " of bad bcc_port: %s", name, bcc_port);
+		goto fail;
+	}
+
 	db = add_database(name);
 	if (!db) {
 		log_error("cannot create database, no memory?");
 		goto fail;
 	}
 
-	db->bcc_count = bcc_count;
-	db->bcc = malloc(sizeof(struct PgBcc) * bcc_count);
-	for (bcc_idx = 0; bcc_idx < bcc_count; bcc_idx++) {
-		int p;
-		db->bcc[bcc_idx].host = strdup(bcc_hosts[bcc_idx]);
-		p = atoi(bcc_ports[bcc_idx]);
-		if (p == 0) {
-			log_error("skipping database %s because"
-				  " of bad bcc[%d] port: %s",
-				  name, bcc_idx, bcc_ports[bcc_idx]);
-			goto fail;
-		}
-		db->bcc[bcc_idx].port = p;
-	}
-	free(bcc_hosts);
-	free(bcc_ports);
-
 	/* host= */
 	if (host) {
 		host = strdup(host);
 		if (!host) {
 			log_error("failed to allocate host=");
+			goto fail;
+		}
+	}
+
+	/* bcc_host= */
+	if (bcc_host) {
+		bcc_host = strdup(bcc_host);
+		if (!bcc_host) {
+			log_error("failed to allocate bcc_host=");
 			goto fail;
 		}
 	}
@@ -357,9 +340,15 @@ bool parse_database(void *base, const char *name, const char *connstr)
 			changed = true;
 		} else if (!!host != !!db->host) {
 			changed = true;
+		} else if (!!bcc_host != !!db->bcc_host) {
+			changed = true;
 		} else if (host && strcmp(host, db->host) != 0) {
 			changed = true;
+		} else if (bcc_host && strcmp(bcc_host, db->bcc_host) != 0) {
+			changed = true;
 		} else if (v_port != db->port) {
+			changed = true;
+		} else if (v_bcc_port != db->bcc_port) {
 			changed = true;
 		} else if (username && !db->forced_user) {
 			changed = true;
@@ -387,6 +376,9 @@ bool parse_database(void *base, const char *name, const char *connstr)
 		free(db->host);
 	db->host = host;
 	db->port = v_port;
+
+	db->bcc_host = bcc_host;
+	db->bcc_port = v_bcc_port;
 
 	/* assign connect_query */
 	set_connect_query(db, connect_query);
