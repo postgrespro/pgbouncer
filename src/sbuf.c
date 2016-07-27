@@ -344,8 +344,9 @@ void sbuf_start_recording(SBuf *sbuf)
 
 void sbuf_stop_recording(SBuf *sbuf)
 {
-	log_info("recorded login sequence of %u bytes len", mbuf_written(&sbuf->mbuf));
+	log_debug("recorded login sequence of %u bytes len", mbuf_written(&sbuf->mbuf));
 	sbuf->record = false;
+	sbuf_enable_bcc(sbuf);
 }
 
 /* proto_fn tells to send some bytes to socket */
@@ -779,10 +780,11 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 	if ((bcc->wait_type != W_NONE) || !bcc->reconnect) {
 		log_noise("mbuf has %u bytes of %d", mbuf_written(&bcc->mbuf), cf_bcc_buffer);
 
-		if (mbuf_written(&bcc->mbuf) + res > cf_bcc_buffer) {
+		unsigned int newsize = mbuf_written(&bcc->mbuf) + res;
+		if (newsize > cf_bcc_buffer) {
 			log_warning(
 				"bcc has fallen behind (the buffer grew too"
-				" large), connection %p is now useless", bcc
+				" large, %u > %u), connection %p is now useless", newsize, cf_bcc_buffer, bcc
 			);
 			if (!sbuf_close(bcc)) {
 				log_warning("bcc has failed to close");

@@ -382,8 +382,6 @@ static bool handle_connect(PgSocket *server)
 				  pga_str(&server->local_addr, buf, sizeof(buf)));
 	}
 
-	sbuf_enable_bcc(&server->sbuf);
-
 	if (!statlist_empty(&pool->cancel_req_list)) {
 		slog_debug(server, "use it for pending cancel req");
 		/* if pending cancel req, send it */
@@ -507,12 +505,12 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 	case SBUF_EV_CONNECT_OK:
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
+		server->request_time = get_cached_time();
+		res = handle_connect(server);
 		if (server->sbuf.bcc) {
 			slog_debug(server, "connecting bcc");
 			dns_connect(server);
 		}
-		server->request_time = get_cached_time();
-		res = handle_connect(server);
 		break;
 	case SBUF_EV_FLUSH:
 		res = true;

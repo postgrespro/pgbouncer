@@ -56,6 +56,7 @@ def pgbouncer(we, name, host, port, hosts, ports, database, user):
 		'postgres': connstr,
 	}
 	cfg['pgbouncer'] = {
+		'bcc_buffer': 1024 * 1024 * 2,
 		'listen_port': port,
 		'listen_addr': host,
 		'auth_type': 'any',
@@ -181,9 +182,6 @@ def main():
 		print("initdb")
 		if not initdbs(we, datadirs):
 			raise Exception("failed to initialize databases")
-
-		print("block port %s" % bcc_port)
-		iptables_block_port(we, bcc_port)
 
 		print("launch postgres")
 		notready = postgri(we, [host, bcc_host], [port, bcc_port], datadirs)
