@@ -13,6 +13,7 @@ def postgres(we, host, port, datadir):
 	name = 'postgres %s' % datadir
 	we.spawn(name,
 		'postgres',
+		'-i',
 		'-h', host,
 		'-p', str(port),
 		'-D', datadir,
@@ -128,6 +129,30 @@ def equal_results(we, names):
 		return False, results
 	return True, outputs[0]
 
+def has_one_hole(log, sublog):
+	ok_from_top = 0
+	ok_from_bottom = 0
+
+	for a, b in zip(list(log), list(sublog)):
+		with open('/tmp/direct', 'w') as f:
+			f.write('%s:%s\n' % (a, b))
+
+		if a == b:
+			ok_from_top += 1
+		else:
+			break
+
+	for a, b in zip(reversed(log), reversed(sublog)):
+		with open('/tmp/reversed', 'w') as f:
+			f.write('%s:%s\n' % (a, b))
+
+		if a == b:
+			ok_from_bottom += 1
+		else:
+			break
+
+	return ok_from_top + ok_from_bottom >= len(sublog)
+
 def main():
 	datadirs = []
 	daemons = []
@@ -139,7 +164,9 @@ def main():
 	bouncer_port = 6543
 	database = 'postgres'
 	user = getpass.getuser()
-	bench_seconds = 60
+	bench_seconds = 160
+	bench_jobs = 1
+	bench_clients = bench_jobs
 
 	we = wtfexpect.WtfExpect()
 
@@ -155,6 +182,9 @@ def main():
 		if not initdbs(we, datadirs):
 			raise Exception("failed to initialize databases")
 
+		print("block port %s" % bcc_port)
+		iptables_block_port(we, bcc_port)
+
 		print("launch postgres")
 		notready = postgri(we, [host, bcc_host], [port, bcc_port], datadirs)
 		daemons.extend(notready)
@@ -163,12 +193,6 @@ def main():
 			if name in notready and 'database system is ready to accept connections' in line:
 				print("%s ready" % name)
 				notready.remove(name)
-
-#		victim = daemons[-1]
-#		victim_port = ports[-2]
-#
-#		print("block port %s" % victim_port)
-#		iptables_block_port(we, victim_port)
 
 		print("launch pgbouncer")
 		daemons.append(pgbouncer(
@@ -188,7 +212,7 @@ def main():
 		# --------- bench
 
 		print("bench init")
-		pgbench(we, 'pgbench', host, bouncer_port, database, user, init=True, jobs=20, clients=20)
+		pgbench(we, 'pgbench', host, bouncer_port, database, user, init=True)
 		while we.alive('pgbench'):
 			name, line = we.readline(timeout=1)
 			if line is not None:
@@ -197,35 +221,48 @@ def main():
 			raise Exception("pgbench -i failed")
 
 		print("launch bench %d sec" % bench_seconds)
-		pgbench(we, 'pgbench', host, bouncer_port, database, user, seconds=bench_seconds)
+		pgbench(we, 'pgbench', host, bouncer_port, database, user, seconds=bench_seconds, jobs=bench_jobs, clients=bench_clients)
 
 		print("wait 3 sec")
-		name, line = we.expect({'pgbouncer': ''}, timeout=3)
+		name, line = we.expect({}, timeout=3)
 		if name is not None:
 			if line is None:
 				raise Exception("has one of the daemons (%s) finished?" % name)
-			else:
-				print('pgbouncer: ' + line)
 
-#		we.kill(victim)
-#		print("%s killed" % victim)
+		print("block port %s" % bcc_port)
+		iptables_block_port(we, bcc_port)
 
-#		print("block port %s" % victim_port)
-#		iptables_block_port(we, victim_port)
+		print("wait until bcc connection gags")
+		while we.alive('pgbench'):
+			name, line = we.readline(timeout=1)
+			if name is None:
+				continue
+			if line is None:
+				continue
+			print("[%s] %s" % (name, line))
+			if 'useless' in line:
+				break
+
+		print("unblock ports")
+		iptables_cleanup(we)
 
 		print("wait for bench to finish")
 		while we.alive('pgbench'):
 			name, line = we.readline(timeout=1)
-			if line is not None:
-				print("[%s] %s" % (name, line))
+			if name is None:
+				continue
+			if line is None:
+				continue
+			print("[%s] %s" % (name, line))
 
 		print("wait 3 sec")
 		name, line = we.expect({'pgbouncer': ''}, timeout=3)
 		if name is not None:
 			raise Exception("has one of the daemons (%s) finished?" % name)
 
-		iptables_cleanup(we)
 		# --------- check
+		print("unblock ports")
+		iptables_cleanup(we)
 
 		print("check")
 		psqls = []
@@ -236,9 +273,17 @@ def main():
 				'''
 				select tid, bid, aid, delta
 				from pgbench_history
-				order by tid, bid, aid, delta
+				order by mtime
 				''',
 			)
+#			psql(
+#				we, name, h, p, database, user,
+#				'''
+#				select tid, bid, aid, delta
+#				from pgbench_history
+#				order by tid, bid, aid, delta
+#				''',
+#			)
 			psqls.append(name)
 		equal, result = equal_results(we, psqls)
 		if equal:
@@ -249,8 +294,13 @@ def main():
 			for name, res in result.items():
 				filename = '/tmp/%s.output' % name
 				with open(filename, 'w') as f:
-					f.write('\n'.join(res['output']))
+					f.write('\n'.join(list(res['output'])))
 					print("see %s" % filename)
+			log = result[psqls[0]]['output']
+			sublog = result[psqls[1]]['output']
+			if has_one_hole(log[:-2], sublog[:-2]):
+				print("but one hole in the middle is ok")
+				ok = True
 
 	finally:
 		# --------- cleanup

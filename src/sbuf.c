@@ -51,8 +51,7 @@ enum WaitType {
 	W_CONNECT,
 	W_RECV,
 	W_SEND,
-	W_BCC,
-	W_BCC_JOIN,
+	W_CATCH_UP,
 	W_ONCE
 };
 
@@ -114,6 +113,8 @@ void sbuf_init(SBuf *sbuf, sbuf_cb_t proto_fn)
 	memset(sbuf, 0, sizeof(SBuf));
 	sbuf->proto_cb = proto_fn;
 	sbuf->ops = &raw_sbufio_ops;
+
+	mbuf_init_dynamic(&sbuf->mbuf);
 }
 
 /* got new socket from accept() */
@@ -155,6 +156,10 @@ bool sbuf_connect(SBuf *sbuf, const struct sockaddr *sa, int sa_len, int timeout
 	Assert(iobuf_empty(sbuf->io) && sbuf->sock == 0);
 	AssertSanity(sbuf);
 
+	if (!sbuf->mbuf.data) {
+		mbuf_init_dynamic(&sbuf->mbuf);
+	}
+
 	/*
 	 * common stuff
 	 */
@@ -171,8 +176,6 @@ bool sbuf_connect(SBuf *sbuf, const struct sockaddr *sa, int sa_len, int timeout
 
 	timeout.tv_sec = timeout_sec;
 	timeout.tv_usec = 0;
-
-	mbuf_init_dynamic(&sbuf->mbuf);
 
 	/* launch connection */
 	res = safe_connect(sock, sa, sa_len);
@@ -304,6 +307,8 @@ bool sbuf_close(SBuf *sbuf)
 		sbuf->bcc = NULL;
 	}
 
+	sbuf->reconnect = true; /* all subsequent connections through this sbuf should be treated as reconnections */
+
 	if (sbuf->wait_type) {
 		Assert(sbuf->sock);
 		/* event_del() acts funny occasionally, debug it */
@@ -432,7 +437,7 @@ static bool sbuf_setup_bcc_events(SBuf *sbuf)
 		log_warning("sbuf_setup_bcc_events: event_add failed: %s", strerror(errno));
 		return false;
 	}
-	sbuf->wait_type = W_BCC_JOIN;
+	sbuf->wait_type = W_CATCH_UP;
 	return true;
 }
 
@@ -623,6 +628,7 @@ try_more:
 	/* actually send it */
 	res = sbuf_op_send(sbuf, mbuf_data(&sbuf->mbuf), avail);
 	if (res > 0) {
+		log_noise("sent %d bytes to bcc", res);
 		if (!mbuf_cut(&sbuf->mbuf, 0, res)) {
 			log_error("failed to cut mbuf, this should not happen");
 			Assert(false);
@@ -750,7 +756,7 @@ static bool allocate_iobuf(SBuf *sbuf)
 	return true;
 }
 
-#define BCC_BUFFER_LEN (1024 * 1024)
+#define BCC_BUFFER_LEN (5 * 1024)
 int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 {
 	SBuf *bcc;
@@ -762,6 +768,8 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 			log_error("couldn't record any further");
 		}
 		return res;
+	} else {
+		sbuf_enable_bcc(sbuf);
 	}
 
 	bcc = sbuf->bcc;
@@ -769,33 +777,39 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 
 	bcc->dst = bcc;
 
-	if (mbuf_written(&bcc->mbuf) + res > BCC_BUFFER_LEN) {
-		log_warning(
+	if ((bcc->wait_type != W_NONE) || !bcc->reconnect) {
+		log_noise("mbuf has %u bytes of %d", mbuf_written(&bcc->mbuf), BCC_BUFFER_LEN);
+
+		if (mbuf_written(&bcc->mbuf) + res > BCC_BUFFER_LEN) {
+			log_warning(
 				"bcc has fallen behind (the buffer grew too"
-				" large), connection is now useless"
-			   );
-		if (!sbuf_close(bcc)) {
-			log_warning("bcc has failed to close");
-			bcc->wait_type = 0;
+				" large), connection %p is now useless", bcc
+			);
+			if (!sbuf_close(bcc)) {
+				log_warning("bcc has failed to close");
+				bcc->wait_type = 0;
+			}
+
+			return res;
 		}
 
-		return res;
-	}
-
-	if (!mbuf_write(&bcc->mbuf, buf, res)) {
-		log_warning(
+		if (!mbuf_write(&bcc->mbuf, buf, res)) {
+			log_warning(
 				"bcc has fallen behind (cannot allocate more"
 				" memory for the buffer), connection is now useless"
-			   );
-		if (!sbuf_close(bcc)) {
-			log_warning("bcc has failed to close");
-			bcc->wait_type = 0;
+			);
+			if (!sbuf_close(bcc)) {
+				log_warning("bcc has failed to close");
+				bcc->wait_type = 0;
+			}
+
+			return res;
 		}
 
-		return res;
+		log_noise("mbuf has %u bytes of %d after writing %d", mbuf_written(&bcc->mbuf), BCC_BUFFER_LEN, res);
 	}
-
-	if (bcc->wait_type == W_BCC) {
+	
+	if (bcc->wait_type == W_SEND) {
 		bool allsent = sbuf_send_pending_mbuf(bcc);
 		if (!allsent) {
 			log_noise("bcc still has something to send");
@@ -870,18 +884,28 @@ void sbuf_bcc_cb(int sock, short flags, void *arg)
 	}
 }
 
-void sbuf_enable_bccs(SBuf *sbuf)
+void sbuf_enable_bcc(SBuf *sbuf)
 {
 	if (sbuf->bcc) {
 		SBuf *bcc = sbuf->bcc;
-		if (bcc->wait_type == W_BCC_JOIN) {
-			log_warning("enabling bcc");
+		if (bcc->wait_type == W_CATCH_UP) {
+			struct MBuf old;
+
+			log_warning("enabling bcc on %sconnect", bcc->reconnect ? "re" : "");
+			old = bcc->mbuf;
+			mbuf_init_dynamic(&bcc->mbuf);
 			if (mbuf_write_raw_mbuf(&bcc->mbuf, &sbuf->mbuf)) {
-				log_info("login sequence copied to bcc");
+				log_warning("login sequence copied to bcc on %sconnect", bcc->reconnect ? "re" : "");
 			} else {
-				log_error("failed to copy login sequence to bcc");
+				log_error("failed to copy login sequence to bcc on %sconnect", bcc->reconnect ? "re" : "");
 			}
-			bcc->wait_type = W_BCC;
+			if (mbuf_write_raw_mbuf(&bcc->mbuf, &old)) {
+				log_warning("previously recorded buffer copied to bcc on %sconnect", bcc->reconnect ? "re" : "");
+			} else {
+				log_error("failed to copy previously recorded buffer to bcc on %sconnect", bcc->reconnect ? "re" : "");
+			}
+			mbuf_free(&old);
+			bcc->wait_type = W_SEND;
 		}
 	}
 }

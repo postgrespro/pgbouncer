@@ -6,7 +6,6 @@ static void serverlist_reconnect_bccs(struct StatList *list)
 {
 	struct List *item;
 	statlist_for_each(item, list) {
-		int i;
 		PgSocket *server = container_of(item, PgSocket, head);
 
 		if (server->sbuf.bcc) {

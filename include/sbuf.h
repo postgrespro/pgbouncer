@@ -85,6 +85,7 @@ struct SBuf {
 	SBuf *bcc;
 	SBuf *orig;
 	bool record;
+	bool reconnect;
 	struct MBuf mbuf;
 
 	IOBuf *io;		/* data buffer, lazily allocated */
@@ -112,7 +113,7 @@ void sbuf_continue(SBuf *sbuf);
 bool sbuf_close(SBuf *sbuf) _MUSTCHECK;
 int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len);
 void sbuf_bcc_cb(int sock, short flags, void *arg);
-void sbuf_enable_bccs(SBuf *sbuf);
+void sbuf_enable_bcc(SBuf *sbuf);
 
 /* proto_fn can use those functions to order behaviour */
 void sbuf_prepare_send(SBuf *sbuf, SBuf *dst, unsigned amount);

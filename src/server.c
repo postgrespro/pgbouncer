@@ -382,7 +382,7 @@ static bool handle_connect(PgSocket *server)
 				  pga_str(&server->local_addr, buf, sizeof(buf)));
 	}
 
-	sbuf_enable_bccs(&server->sbuf);
+	sbuf_enable_bcc(&server->sbuf);
 
 	if (!statlist_empty(&pool->cancel_req_list)) {
 		slog_debug(server, "use it for pending cancel req");
@@ -603,7 +603,7 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_FAILED:
-		slog_warning(server, "failed to connect to bcc");
+		slog_warning(server, "failed to %sconnect to bcc", sbuf->reconnect ? "re" : "");
 		if (!sbuf_close(sbuf)) {
 			slog_warning(server, "bcc failed to close");
 			sbuf->wait_type = 0;
@@ -611,7 +611,7 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_OK:
-		slog_info(server, "connected to bcc");
+		slog_info(server, "%sconnected to bcc", sbuf->reconnect ? "re" : "");
 		res = true;
 		break;
 	default:

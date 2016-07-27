@@ -602,7 +602,7 @@ bool find_server(PgSocket *client)
 	Assert(!server || server->state == SV_IDLE);
 
 	if (server) {
-		sbuf_enable_bccs(&server->sbuf);
+		sbuf_enable_bcc(&server->sbuf);
 	}
 
 	/* send var changes */
@@ -981,7 +981,7 @@ void dns_connect(struct PgSocket *server)
 	} else {
 		host = db->bcc_host;
 		port = db->bcc_port;
-		slog_info(server, "connecting to bcc %s:%d", host, port);
+		slog_info(server, "%sconnecting to bcc %s:%d", server->sbuf.reconnect ? "re" : "", host, port);
 	}
 	Assert(host != NULL); // should not happen
 
