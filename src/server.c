@@ -508,7 +508,7 @@ bool server_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		slog_debug(server, "S: connect ok");
 		Assert(server->state == SV_LOGIN);
 		if (server->sbuf.bcc) {
-			slog_warning(server, "connecting bcc");
+			slog_debug(server, "connecting bcc");
 			dns_connect(server);
 		}
 		server->request_time = get_cached_time();
@@ -611,7 +611,7 @@ bool bcc_proto(SBuf *sbuf, SBufEvent evtype, struct MBuf *data)
 		res = true;
 		break;
 	case SBUF_EV_CONNECT_OK:
-		slog_info(server, "%sconnected to bcc", sbuf->reconnect ? "re" : "");
+		slog_debug(server, "%sconnected to bcc", sbuf->reconnect ? "re" : "");
 		res = true;
 		break;
 	default:

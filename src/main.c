@@ -119,6 +119,7 @@ usec_t cf_autodb_idle_timeout;
 
 usec_t cf_bcc_connect_timeout;
 usec_t cf_bcc_reconnect_period;
+unsigned int cf_bcc_buffer;
 
 usec_t cf_server_lifetime;
 usec_t cf_server_idle_timeout;
@@ -234,6 +235,7 @@ CF_ABS("autodb_idle_timeout", CF_TIME_USEC, cf_autodb_idle_timeout, 0, "3600"),
 
 CF_ABS("bcc_connect_timeout", CF_TIME_USEC, cf_bcc_connect_timeout, 0, "1"),
 CF_ABS("bcc_reconnect_period", CF_TIME_USEC, cf_bcc_reconnect_period, 0, "10"),
+CF_ABS("bcc_buffer", CF_UINT, cf_bcc_buffer, 0, "1048576"),
 
 CF_ABS("server_reset_query", CF_STR, cf_server_reset_query, 0, "DISCARD ALL"),
 CF_ABS("server_reset_query_always", CF_INT, cf_server_reset_query_always, 0, "0"),

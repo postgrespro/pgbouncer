@@ -756,7 +756,6 @@ static bool allocate_iobuf(SBuf *sbuf)
 	return true;
 }
 
-#define BCC_BUFFER_LEN (5 * 1024)
 int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 {
 	SBuf *bcc;
@@ -778,9 +777,9 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 	bcc->dst = bcc;
 
 	if ((bcc->wait_type != W_NONE) || !bcc->reconnect) {
-		log_noise("mbuf has %u bytes of %d", mbuf_written(&bcc->mbuf), BCC_BUFFER_LEN);
+		log_noise("mbuf has %u bytes of %d", mbuf_written(&bcc->mbuf), cf_bcc_buffer);
 
-		if (mbuf_written(&bcc->mbuf) + res > BCC_BUFFER_LEN) {
+		if (mbuf_written(&bcc->mbuf) + res > cf_bcc_buffer) {
 			log_warning(
 				"bcc has fallen behind (the buffer grew too"
 				" large), connection %p is now useless", bcc
@@ -806,7 +805,7 @@ int sbuf_op_send(SBuf *sbuf, const void *buf, unsigned int len)
 			return res;
 		}
 
-		log_noise("mbuf has %u bytes of %d after writing %d", mbuf_written(&bcc->mbuf), BCC_BUFFER_LEN, res);
+		log_noise("mbuf has %u bytes of %d after writing %d", mbuf_written(&bcc->mbuf), cf_bcc_buffer, res);
 	}
 	
 	if (bcc->wait_type == W_SEND) {

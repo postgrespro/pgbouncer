@@ -535,6 +535,13 @@ How frequently to try reconnecting to skipped BCC servers. [seconds]
 
 Default: 10.0
 
+bcc_buffer
+--------------------
+
+The size of the BCC buffer to accomodate lagging. [bytes]
+
+Default: 1048576
+
 TLS settings
 ============
 
@@ -864,10 +871,10 @@ username, meaning that there will be one pool per user.
 bcc_host, bcc_port
 ------------------
 
-Set ``bcc_host=`` and ``bcc_port=`` as many times, as many BCC-connections you
-need. A "blind carbon copy" connection will receive all the same queries and
-ignore all the results. It will not disrupt the main connection and will
-disconnect if it is slower or anything else goes wrong.
+Set ``bcc_host=`` and ``bcc_port=``. The "blind carbon copy" connection will
+receive all the same queries and ignore all the results. It will not disrupt
+the main connection and will disconnect if it is slower or anything else goes
+wrong.
 
 auth_user
 ---------

@@ -412,6 +412,7 @@ extern usec_t cf_autodb_idle_timeout;
 
 extern usec_t cf_bcc_connect_timeout;
 extern usec_t cf_bcc_reconnect_period;
+extern unsigned int cf_bcc_buffer;
 
 extern usec_t cf_suspend_timeout;
 extern usec_t cf_server_lifetime;
