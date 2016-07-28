@@ -73,3 +73,17 @@ bcc_buffer
 The size of the BCC buffer to accomodate lagging. [bytes]
 
 Default: 1048576
+
+Example
+=======
+
+::
+
+ [databases]
+ postgres = host=127.0.0.1 port=5432 dbname=postgres user=kvap bcc_host=127.0.0.1 bcc_port=5433
+
+ [pgbouncer]
+ listen_port = 6543
+ bcc_buffer = 3145728
+ listen_addr = 127.0.0.1
+ auth_type = any
